@@ -80,7 +80,7 @@ class Astar:
                 # closest_distance = self.ClosestDistanceToWall(start_vertex, end_vertex)
                 # cost_start_end = self.Cost(start_vertex, end_vertex, closest_distance)
                 if not self.IsCollision(start_vertex, end_vertex):
-                    smoothed_path.append(end_vertex)
+                    # smoothed_path.append(end_vertex)
                     # update the costs of future vertices
                     start_position = end_position
                     found_end = True
