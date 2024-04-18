@@ -50,8 +50,45 @@ class Astar:
                             weighted_grid[i + x][j + y] = max(weighted_grid[i + x][j + y], 1 + 5/((dist - margin)**2))
         return weighted_grid
             
-                
-
+    def IsCollision(self, start, end): 
+        # check if the line between start and end is collision free
+        # get the cells that the line goes through
+        increment = 0.5
+        segment_length = np.linalg.norm(end - start)
+        d_line_length = round(segment_length/increment)
+        theta = math.atan2((end[1] - start[1]),(end[0] - start[0]))
+        heading_segment_inc = np.asarray([increment*math.cos(theta), increment*math.sin(theta)])
+        for i in range(d_line_length):
+            position = np.round(start + i*heading_segment_inc).astype(int)
+            if not self.is_valid(position[0], position[1]) or self.weighted_grid[position[0]][position[1]] == float('inf'):
+                return True
+        return False
+        
+    def SmoothPath(self):
+        path = self.path
+        if len(path) < 2:
+            return path
+        smoothed_path = []
+        # connect the farthest vertices with no collision
+        start_position = 0
+        while start_position < len(path):
+            start_vertex = path[start_position]
+            smoothed_path.append(start_vertex)
+            found_end = False
+            for end_position in range(len(path) - 1, start_position, -1):
+                end_vertex = path[end_position]
+                # closest_distance = self.ClosestDistanceToWall(start_vertex, end_vertex)
+                # cost_start_end = self.Cost(start_vertex, end_vertex, closest_distance)
+                if not self.IsCollision(start_vertex, end_vertex):
+                    smoothed_path.append(end_vertex)
+                    # update the costs of future vertices
+                    start_position = end_position
+                    found_end = True
+                    break
+            if not found_end:
+                start_position += 1
+        return smoothed_path
+    
     def get_path(self):
         return self.path
     # Check if a cell is valid (within the grid)
@@ -106,17 +143,17 @@ class Astar:
         # Check if the source and destination are valid
         if not self.is_valid(src[0], src[1]) or not self.is_valid(dest[0], dest[1]):
             print("Source or destination is invalid")
-            return
+            return False
     
         # Check if the source and destination are unblocked
         if not self.is_unblocked(src[0], src[1]) or not self.is_unblocked(dest[0], dest[1]):
             print("Source or the destination is blocked")
-            return
+            return False
     
         # Check if we are already at the destination
         if self.is_destination(src[0], src[1], dest):
             print("We are already at the destination")
-            return
+            return True
     
         # Initialize the closed list (visited cells)
         closed_list = [[False for _ in range(self.COL)] for _ in range(self.ROW)]
@@ -166,7 +203,7 @@ class Astar:
                         # Trace and print the path from source to destination
                         self.trace_path(cell_details, dest)
                         found_dest = True
-                        return
+                        return True
                     else:
                         # Calculate the new f, g, and h values
                         g_new = cell_details[i][j].g + self.weighted_grid[new_i][new_j]
@@ -183,7 +220,8 @@ class Astar:
                             cell_details[new_i][new_j].h = h_new
                             cell_details[new_i][new_j].parent_i = i
                             cell_details[new_i][new_j].parent_j = j
-    
+
         # If the destination is not found after visiting all cells
         if not found_dest:
             print("Failed to find the destination cell")
+        return False
