@@ -1,6 +1,7 @@
 import math
 import heapq
 import numpy as np
+import queue
 # Define the Cell class
 class Cell:
     def __init__(self):
@@ -22,6 +23,28 @@ class Astar:
         self.weighted_grid = self.CreateWeightedGrid(grid)
 
     # Define the size of the grid
+    def findable_area(self, start):
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+        visited = dict()
+        q = queue.Queue()
+        start_l = (start[0], start[1])
+        visitedl = [np.asarray[(new_i, new_j)]]
+        visited[start_l] = True
+        
+        q.put(start_l)
+        while not q.empty():
+            current = q.get()
+            for dir in directions:
+                new_i = current[0] + dir[0]
+                new_j = current[1] + dir[1]
+                visitedt = False
+                for key in visited.keys():
+                    visitedt = visitedt or (key[0] == new_i and key[1] == new_j)
+                if self.is_valid(new_i, new_j) and self.is_unblocked(new_i, new_j) and not visitedt:
+                    visited[(new_i, new_j)] = True
+                    visitedl.append(np.asarray[(new_i, new_j)])
+                    q.put((new_i, new_j))
+        return visited
     
     def CreateWeightedGrid(self, grid):
         weighted_grid = np.ones((self.ROW, self.COL))
