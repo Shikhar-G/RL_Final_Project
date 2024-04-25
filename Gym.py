@@ -56,9 +56,12 @@ class CCPP_Env(gym.Env):
     def __init__(
         self,
         render_mode=None,
-        map_file="FinalProject/GDC1.vectormap.json",
+        map_file="CDL_Ground.vectormap.json",
         agent_dims=np.array([1, 1]),
         agent_loc=np.array([0, 0]),
+        agent_dir=np.array([0, 1]),
+        agent_max_linear_speed=0.3,
+        agent_max_angular_speed=1.9,
         scaling=10,
         coverage_radius=1,
     ):
@@ -82,8 +85,14 @@ class CCPP_Env(gym.Env):
         self.coverage_channel = np.zeros((self.image_size_x, self.image_size_y))
 
         # initialize agent channel
-        self.agent_dims = np.array(agent_dims * scaling).astype(int)
+        self.agent_dims = np.array(
+            [math.ceil(agent_dims[0] * scaling), math.ceil(agent_dims[1] * scaling)]
+        )
         self.agent_loc = self.transform_xy_to_map(agent_loc[0], agent_loc[1])
+        # unit vector for agent direction
+        self.agent_dir = agent_dir / np.linalg.norm(agent_dir)
+        self.agent_max_linear_speed = agent_max_linear_speed  # in meters/second
+        self.agent_max_angular_speed = agent_max_angular_speed  # in radians
         self.set_agent_channel()
 
         # make the observation space with 3 channels: 1 for the map, 1 for the agent, 1 for spaces visited
@@ -95,10 +104,12 @@ class CCPP_Env(gym.Env):
         )
 
         # #navigation goal input, 2D vector
-        self.astar = Astar(self.vectormap, agent_dims[0])
+        inverted_map = 1 - self.map_channel
+        self.astar = Astar(inverted_map, max(self.agent_dims), 0)
         self.coverage_possible = self.astar.findable_area(
-            self.agent_loc, use_weighted_grid=False
+            self.agent_loc, use_weighted_grid=False, return_visited=False
         )
+        print("coverage possible: ", self.coverage_possible)
         self.action_space = spaces.Box(
             low=np.array([self.x_min, self.y_min, -1]),
             high=np.array([self.x_max, self.y_max, 1]),
@@ -108,6 +119,10 @@ class CCPP_Env(gym.Env):
         self.nav_goal = np.array([0.0, 0.0])
         self.coverage_radius = coverage_radius
         self.time_penalty_per_scaled_meter = 1.0
+
+        self.coverage_weight = 0.25
+        self.time_weight = 1
+        self.total_termination_ratio_weight = 1000
 
     def reset(self):
         self.coverage_channel = np.zeros((self.image_size_x, self.image_size_y))
@@ -119,16 +134,14 @@ class CCPP_Env(gym.Env):
         return np.array([self.map_channel, self.agent_channel, self.coverage_channel])
 
     def get_reward_termination(self):
-        return -100
+        uncovered = self.coverage_possible - np.count_nonzero(self.coverage_channel)
+        ratio = uncovered / self.coverage_possible
+        print("uncovered: ", uncovered, "ratio: ", ratio)
+        return -self.total_termination_ratio_weight * ratio
 
-    def get_reward(self, total_length, coverage, recoverage):
-        total_covered = coverage + recoverage
-        reward_out = total_length * (
-            coverage / total_covered
-            - recoverage / total_covered
-            - self.time_penalty_per_scaled_meter
-        )
-        return 0.5 * coverage + 0.5 * recoverage - 0.5 * total_length
+    def get_reward(self, total_time, coverage):
+        print("total time: ", total_time, "coverage: ", coverage)
+        return coverage * self.coverage_weight - total_time * self.time_weight
 
     def step(self, action):
         # check if action is termination
@@ -136,27 +149,35 @@ class CCPP_Env(gym.Env):
         if action[2] < 0:
             return self.get_observation(), self.get_reward_termination(), True, {}
         # get path from agent to navigation goal
+        self.nav_goal = np.array(self.transform_xy_to_map(action[0], action[1]))
+        # see if navigation goal is reachable
         viable = self.astar.a_star_search(self.agent_loc, self.nav_goal)
-        path, successful = self.astar.SmoothPath(), viable
-        if not successful:
+        if not viable:
             return self.get_observation(), -100, False, {}
-        self.coverage_channel, total_length, coverage, recoverage = self.sweep_path(
-            path
-        )
-        self.agent_loc = self.transform_xy_to_map(self.nav_goal[0], self.nav_goal[1])
+        path = self.astar.SmoothPath()
+        total_time, coverage = self.sweep_path(path)
+        # self.agent_loc = self.nav_goal[0], self.nav_goal[1]
         self.set_agent_channel()
 
         return (
             self.get_observation(),
-            self.get_reward(total_length, coverage, recoverage),
+            self.get_reward(total_time, coverage),
             False,
             {},
         )
+
+    def get_turn_distance(self, veca, vecb):
+        adotb = np.dot(veca, vecb)
+        abmag = np.linalg.norm(veca) * np.linalg.norm(vecb)
+        return math.acos(adotb / abmag)
 
     def transform_xy_to_map(self, x, y):
         return round((x - self.x_min) * self.scaling), round(
             (y - self.y_min) * self.scaling
         )
+
+    def transform_map_to_xy(self, x, y):
+        return x / self.scaling + self.x_min, y / self.scaling + self.y_min
 
     def set_agent_channel(self):
         self.agent_channel = np.zeros((self.image_size_x, self.image_size_y))
@@ -206,6 +227,9 @@ class CCPP_Env(gym.Env):
                     x = start_x + slope * (y - start_y)
                     self.map_channel[round(x), round(y)] = 1
 
+    def is_valid(self, x, y):
+        return 0 <= x < self.map_channel.shape[0] and 0 <= y < self.map_channel.shape[1]
+
     def line_coverage_channel_sweep(
         self,
         p0,
@@ -247,7 +271,9 @@ class CCPP_Env(gym.Env):
             stop_neg = False
             for d_cr in range(d_coverage_radius + 1):
                 if (
-                    self.map_channel[round(rad_pos[0]), round(rad_pos[1])] == 0
+                    self.is_valid(round(rad_pos[0]), round(rad_pos[1]))
+                    and self.astar.coverage_grid[round(rad_pos[0]), round(rad_pos[1])]
+                    != float("inf")
                     and not stop_pos
                 ):
 
@@ -262,7 +288,9 @@ class CCPP_Env(gym.Env):
                 else:
                     stop_pos = True
                 if (
-                    self.map_channel[round(rad_neg[0]), round(rad_neg[1])] == 0
+                    self.is_valid(round(rad_neg[0]), round(rad_neg[1]))
+                    and self.astar.coverage_grid[round(rad_neg[0]), round(rad_neg[1])]
+                    != float("inf")
                     and not stop_neg
                 ):
 
@@ -284,6 +312,14 @@ class CCPP_Env(gym.Env):
             old_rad_neg = [0, 0]
             rad_pos = pos
             rad_neg = pos
+            if not self.is_valid(
+                round(rad_pos[0]), round(rad_pos[1])
+            ) or self.astar.coverage_grid[
+                round(rad_pos[0]), round(rad_pos[1])
+            ] == float(
+                "inf"
+            ):
+                return segment_length
             stop_pos = False
             stop_neg = False
             d_coverage_circle = round(
@@ -292,7 +328,9 @@ class CCPP_Env(gym.Env):
 
             for d_cr in range(d_coverage_circle + 1):
                 if (
-                    self.map_channel[round(rad_pos[0]), round(rad_pos[1])] == 0
+                    self.is_valid(round(rad_pos[0]), round(rad_pos[1]))
+                    and self.astar.coverage_grid[round(rad_pos[0]), round(rad_pos[1])]
+                    != float("inf")
                     and not stop_pos
                 ):
 
@@ -305,7 +343,9 @@ class CCPP_Env(gym.Env):
                 else:
                     stop_pos = True
                 if (
-                    self.map_channel[round(rad_neg[0]), round(rad_neg[1])] == 0
+                    self.is_valid(round(rad_neg[0]), round(rad_neg[1]))
+                    and self.astar.coverage_grid[round(rad_neg[0]), round(rad_neg[1])]
+                    != float("inf")
                     and not stop_neg
                 ):
                     round_rad_neg = [round(rad_neg[0]), round(rad_neg[1])]
@@ -325,10 +365,18 @@ class CCPP_Env(gym.Env):
     def sweep_path(self, path, increment=0.5):
         p0 = path[0]
         old_coverage = np.count_nonzero(self.coverage_channel)
-        total_length = 0
+        # total_length = 0
+        total_time = 0
         for p1 in path[1:]:
             segment_length = self.line_coverage_channel_sweep(p0, p1, increment)
+            p0_p1_vec = (p1 - p0) / np.linalg.norm(p1 - p0)
+            turn_distance = self.get_turn_distance(self.agent_dir, p0_p1_vec)
+            turn_time = turn_distance / self.agent_max_angular_speed
+            linear_time = segment_length / self.scaling / self.agent_max_linear_speed
+            self.agent_dir = p0_p1_vec
+            self.agent_loc = p1
             p0 = p1
-            total_length += segment_length
+            # total_length += segment_length
+            total_time += turn_time + linear_time
         new_coverage = np.count_nonzero(self.coverage_channel) - old_coverage
-        return total_length, new_coverage
+        return total_time, new_coverage / self.scaling

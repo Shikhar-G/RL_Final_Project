@@ -13,18 +13,20 @@ class Cell:
 
 
 class Astar:
-    def __init__(self, grid, vehicle_size):
+
+    def __init__(self, grid, vehicle_size, margin):
         self.path = []
         self.ROW = len(grid)
         self.COL = len(grid[0])
-        self.margin = 1
+        self.margin = margin
         self.vehicle_size = vehicle_size
         self.unweighted_grid = grid
+        self.coverage_grid = self.CreateCoverageGrid()
         self.weighted_grid = self.CreateWeightedGrid()
 
     # Define the size of the grid
-    def findable_area(self, start, use_weighted_grid=True):
-        directions = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+    def findable_area(self, start, use_weighted_grid=True, return_visited=True):
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
         visited = dict()
         q = queue.Queue()
         start_l = (start[0], start[1])
@@ -32,6 +34,7 @@ class Astar:
         visitedl = np.zeros((self.unweighted_grid.shape[0], self.unweighted_grid.shape[1]))
         visitedl[start[0]][start[1]] = 1
         visited = [np.asarray([start[0], start[1]])]
+        margin = 1
 
         q.put(start_l)
         while not q.empty():
@@ -39,18 +42,29 @@ class Astar:
             for dir in directions:
                 new_i = current[0] + dir[0]
                 new_j = current[1] + dir[1]
-                visitedt = False
-                # for key in visited:
-                #     visitedt = visitedt or (key[0] == new_i and key[1] == new_j)
                 if (
                     self.is_valid(new_i, new_j)
                     and self.is_unblocked(new_i, new_j, use_weighted_grid)
-                    and not visitedl[new_i][new_j] == 1
+                    and not visitedl[new_i][new_j]
                 ):
                     visitedl[new_i][new_j] = 1
                     visited.append(np.asarray([new_i, new_j]))
                     q.put((new_i, new_j))
-        return visited
+        if return_visited:
+            return visited
+        return len(visited)
+
+    def CreateCoverageGrid(self):
+        weighted_grid = np.ones((self.ROW, self.COL))
+        wall_indices = np.where(self.unweighted_grid == 0)
+        margin = 1
+        for i, j in zip(wall_indices[0], wall_indices[1]):
+            weighted_grid[i][j] = float("inf")
+            # set all collisions to inf
+            for x in range(max(0, i - margin), min(self.ROW, i + margin + 1)):
+                for y in range(max(0, j - margin), min(self.COL, j + margin + 1)):
+                    weighted_grid[x][y] = float("inf")
+        return weighted_grid
 
     def CreateWeightedGrid(self):
         weighted_grid = np.ones((self.ROW, self.COL))
@@ -136,7 +150,7 @@ class Astar:
     def is_unblocked(self, row, col, use_weighted_grid=True):
         if use_weighted_grid:
             return self.weighted_grid[row][col] != float("inf")
-        return self.unweighted_grid[row][col] != 0
+        return self.coverage_grid[row][col] != float("inf")
 
     # Check if a cell is the destination
     def is_destination(self, row, col, dest):
@@ -178,6 +192,7 @@ class Astar:
     # Implement the A* search algorithm
     def a_star_search(self, src, dest):
         # Check if the source and destination are valid
+        print("Source: ", src, " Destination: ", dest)
         if not self.is_valid(src[0], src[1]) or not self.is_valid(dest[0], dest[1]):
             print("Source or destination is invalid")
             return False
