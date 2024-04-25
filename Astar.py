@@ -20,7 +20,7 @@ class Astar:
         self.margin = 1
         self.vehicle_size = vehicle_size
         self.unweighted_grid = grid
-        self.weighted_grid = self.CreateWeightedGrid(grid)
+        self.weighted_grid = self.CreateWeightedGrid()
 
     # Define the size of the grid
     def findable_area(self, start, use_weighted_grid=True):
@@ -28,8 +28,10 @@ class Astar:
         visited = dict()
         q = queue.Queue()
         start_l = (start[0], start[1])
-        visitedl = [np.asarray[(new_i, new_j)]]
-        visited = [start_l]
+        # visitedl = [np.asarray([start[0], start[1]])]
+        visitedl = np.zeros((self.unweighted_grid.shape[0], self.unweighted_grid.shape[1]))
+        visitedl[start[0]][start[1]] = 1
+        visited = [np.asarray([start[0], start[1]])]
 
         q.put(start_l)
         while not q.empty():
@@ -38,17 +40,17 @@ class Astar:
                 new_i = current[0] + dir[0]
                 new_j = current[1] + dir[1]
                 visitedt = False
-                for key in visited:
-                    visitedt = visitedt or (key[0] == new_i and key[1] == new_j)
+                # for key in visited:
+                #     visitedt = visitedt or (key[0] == new_i and key[1] == new_j)
                 if (
                     self.is_valid(new_i, new_j)
                     and self.is_unblocked(new_i, new_j, use_weighted_grid)
-                    and not visitedt
+                    and not visitedl[new_i][new_j] == 1
                 ):
-                    visited.append(new_i, new_j)
-                    visitedl.append(np.asarray[(new_i, new_j)])
+                    visitedl[new_i][new_j] = 1
+                    visited.append(np.asarray([new_i, new_j]))
                     q.put((new_i, new_j))
-        return visitedl
+        return visited
 
     def CreateWeightedGrid(self):
         weighted_grid = np.ones((self.ROW, self.COL))
