@@ -120,7 +120,7 @@ class CCPP_Env(gym.Env):
         self.coverage_radius = coverage_radius
         self.time_penalty_per_scaled_meter = 1.0
 
-        self.coverage_weight = 0.25
+        self.coverage_weight = 0.3
         self.time_weight = 1
         self.total_termination_ratio_weight = 1000
 
@@ -189,6 +189,40 @@ class CCPP_Env(gym.Env):
                 agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2
             ):
                 self.agent_channel[i, j] = 1
+        # remove one square on the perimeter of the agent's bounding box representing the agent's direction
+        perimeter_edge_size = min(self.agent_dims)
+        # find the point on the perimeter of the agent's bounding box that is in the direction of the agent
+        closest_point = np.array([agent_x, agent_y])
+        closest_turn_distance = float("inf")
+        # left and right edges
+        y = [agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2 - 1]
+        for i in range(
+            agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2
+        ):
+            for j in y:
+                vec = (np.array([i, j]) - self.agent_loc) / np.linalg.norm(
+                    np.array([i, j]) - self.agent_loc
+                )
+                turn_distance = self.get_turn_distance(self.agent_dir, vec)
+                if turn_distance < closest_turn_distance:
+                    closest_turn_distance = turn_distance
+                    closest_point = np.array([i, y[1]])
+
+        # top and bottom edges
+        x = [agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2 - 1]
+        for j in range(
+            agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2
+        ):
+            for i in x:
+                vec = (np.array([i, j]) - self.agent_loc) / np.linalg.norm(
+                    np.array([i, j]) - self.agent_loc
+                )
+                turn_distance = self.get_turn_distance(self.agent_dir, vec)
+                if turn_distance < closest_turn_distance:
+                    closest_turn_distance = turn_distance
+                    closest_point = np.array([x[1], j])
+
+        self.agent_channel[closest_point[0], closest_point[1]] = 0
 
     def set_map_channel(self):
         # first channel is the map, which is a binary image where 0 is empty space and 1 is occupied space
