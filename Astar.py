@@ -52,7 +52,7 @@ class Astar:
                     q.put((new_i, new_j))
         if return_visited:
             return visited
-        return len(visited)
+        return visitedl
 
     def CreateCoverageGrid(self):
         weighted_grid = np.ones((self.ROW, self.COL))

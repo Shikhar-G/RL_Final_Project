@@ -1,22 +1,12 @@
-import numpy as np
-
-# import pygame
-import gymnasium as gym
-from gym import spaces
-
-# from spaces import MultiBinary
-import json
-import math
-
-import numpy as np
-
-# import pygame
+import pygame
 from gymnasium.spaces import MultiBinary
 import gymnasium as gym
 from gym import spaces
+import numpy as np
 import json
 import math
 from Astar import Astar
+import cv2
 
 
 def get_vectormap(map_file):
@@ -25,7 +15,7 @@ def get_vectormap(map_file):
     return data
 
 
-def get_image_size(vectormap, scaling=10):
+def get_image_size(vectormap, scaling=10, padding=0):
     # get the size of the image
     x = []
     y = []
@@ -34,8 +24,8 @@ def get_image_size(vectormap, scaling=10):
             x.append(line[point]["x"])
             y.append(line[point]["y"])
     return (
-        math.ceil(max(x) - min(x)) * scaling + 1,
-        math.ceil(max(y) - min(y)) * scaling + 1,
+        math.ceil(max(x) - min(x)) * scaling + padding * 2,
+        math.ceil(max(y) - min(y)) * scaling + padding * 2,
     )
 
 
@@ -66,17 +56,19 @@ class CCPP_Env(gym.Env):
         coverage_radius=1,
     ):
         # get map properties
+        self.scaling = scaling
+        self.map_padding = self.scaling
         self.vectormap = get_vectormap(map_file)
 
         # get the size of the image
-        self.image_size_x, self.image_size_y = get_image_size(self.vectormap, scaling)
+        self.image_size_x, self.image_size_y = get_image_size(
+            self.vectormap, scaling, self.map_padding
+        )
 
         # get min values for the offset
         self.x_min, self.y_min, self.x_max, self.y_max = get_image_min_max(
             self.vectormap
         )
-
-        self.scaling = scaling
 
         # initialize map channel
         self.set_map_channel()
@@ -106,9 +98,10 @@ class CCPP_Env(gym.Env):
         # #navigation goal input, 2D vector
         inverted_map = 1 - self.map_channel
         self.astar = Astar(inverted_map, max(self.agent_dims), 0)
-        self.coverage_possible = self.astar.findable_area(
+        self.map_channel_out = self.astar.findable_area(
             self.agent_loc, use_weighted_grid=False, return_visited=False
         )
+        self.coverage_possible = np.count_nonzero(self.map_channel_out)
         print("coverage possible: ", self.coverage_possible)
         self.action_space = spaces.Box(
             low=np.array([self.x_min, self.y_min, -1]),
@@ -131,7 +124,12 @@ class CCPP_Env(gym.Env):
         return self.get_observation()
 
     def get_observation(self):
-        return np.array([self.map_channel, self.agent_channel, self.coverage_channel])
+        return cv2.resize(
+            np.stack(
+                [self.map_channel_out, self.agent_channel, self.coverage_channel]
+            ).transpose(1, 2, 0),
+            (224, 224),
+        )
 
     def get_reward_termination(self):
         uncovered = self.coverage_possible - np.count_nonzero(self.coverage_channel)
@@ -189,40 +187,35 @@ class CCPP_Env(gym.Env):
                 agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2
             ):
                 self.agent_channel[i, j] = 1
-        # remove one square on the perimeter of the agent's bounding box representing the agent's direction
-        perimeter_edge_size = min(self.agent_dims)
-        # find the point on the perimeter of the agent's bounding box that is in the direction of the agent
-        closest_point = np.array([agent_x, agent_y])
-        closest_turn_distance = float("inf")
-        # left and right edges
-        y = [agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2 - 1]
-        for i in range(
-            agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2
-        ):
-            for j in y:
-                vec = (np.array([i, j]) - self.agent_loc) / np.linalg.norm(
-                    np.array([i, j]) - self.agent_loc
-                )
-                turn_distance = self.get_turn_distance(self.agent_dir, vec)
-                if turn_distance < closest_turn_distance:
-                    closest_turn_distance = turn_distance
-                    closest_point = np.array([i, y[1]])
+        # fill in one square on the perimeter of the map to indicate the direction of the agent
 
-        # top and bottom edges
-        x = [agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2 - 1]
-        for j in range(
-            agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2
-        ):
-            for i in x:
-                vec = (np.array([i, j]) - self.agent_loc) / np.linalg.norm(
-                    np.array([i, j]) - self.agent_loc
-                )
-                turn_distance = self.get_turn_distance(self.agent_dir, vec)
-                if turn_distance < closest_turn_distance:
-                    closest_turn_distance = turn_distance
-                    closest_point = np.array([x[1], j])
+        # get the center of the map
+        old_x = self.image_size_x // 2
+        old_y = self.image_size_y // 2
+        x = self.image_size_x // 2
+        y = self.image_size_y // 2
+        # move in the direction of the agent until we hit the edge of the map
+        dir = self.agent_dir * self.scaling
+        while self.is_valid(x, y):
+            x += round(dir[0])
+            y += round(dir[1])
+        # set the pixel at the edge of the map to 1
+        box_size = max(self.map_padding // 4, 1)
+        if x < 0:
+            x = box_size
+        elif x >= self.image_size_x:
+            x = self.image_size_x - 1 - box_size
+        if y < 0:
+            y = box_size
+        elif y >= self.image_size_y:
+            y = self.image_size_y - 1 - box_size
 
-        self.agent_channel[closest_point[0], closest_point[1]] = 0
+        # draw a box around the pixel of 0.5m
+        for i in range(max(x - box_size, 0), min(x + box_size + 1, self.image_size_x)):
+            for j in range(
+                max(y - box_size, 0), min(y + box_size + 1, self.image_size_y)
+            ):
+                self.agent_channel[i, j] = 1
 
     def set_map_channel(self):
         # first channel is the map, which is a binary image where 0 is empty space and 1 is occupied space
@@ -232,6 +225,12 @@ class CCPP_Env(gym.Env):
             start_y = round((line["p0"]["y"] - self.y_min) * self.scaling)
             end_x = round((line["p1"]["x"] - self.x_min) * self.scaling)
             end_y = round((line["p1"]["y"] - self.y_min) * self.scaling)
+
+            # add padding to the lines
+            start_x += self.map_padding
+            start_y += self.map_padding
+            end_x += self.map_padding
+            end_y += self.map_padding
 
             # horizontal line
             if start_y == end_y:
