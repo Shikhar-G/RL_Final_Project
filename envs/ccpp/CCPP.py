@@ -1,11 +1,11 @@
 import pygame
 from gymnasium.spaces import MultiBinary
 import gymnasium as gym
-from gym import spaces
+from gymnasium import spaces
 import numpy as np
 import json
 import math
-from Astar import Astar
+from envs.ccpp.Astar import Astar
 import cv2
 
 
@@ -101,6 +101,8 @@ class CCPP_Env(gym.Env):
         self.map_channel_out = self.astar.findable_area(
             self.agent_loc, use_weighted_grid=False, return_visited=False
         )
+        self.possible_start_positions = self.astar.findable_area(
+            self.agent_loc)
         self.coverage_possible = np.count_nonzero(self.map_channel_out)
         print("coverage possible: ", self.coverage_possible)
         self.action_space = spaces.Box(
@@ -119,10 +121,48 @@ class CCPP_Env(gym.Env):
 
     def reset(self):
         self.coverage_channel = np.zeros((self.image_size_x, self.image_size_y))
+        # randomly sample a start point
+        start_index = np.random.randint(0, len(self.possible_start_positions))
+        self.agent_loc = self.possible_start_positions[start_index]
+        # randomly sample 2 numbers from -1 to 1 then normalize them
+        self.agent_dir = np.random.rand(2) * 2 - 1
+        self.agent_dir = self.agent_dir / np.linalg.norm(self.agent_dir)
         self.set_agent_channel()
-        self.nav_goal = np.array([0.0, 0.0])
-        return self.get_observation()
+        return self.get_observation(), {}
 
+    def render(self, mode="human"):
+        if mode == "human":
+            pygame.init()
+            screen = pygame.display.set_mode(
+                (self.image_size_x, self.image_size_y), pygame.RESIZABLE
+            )
+            screen.fill((0, 0, 0))
+            # draw the map
+            for i in range(self.image_size_x):
+                for j in range(self.image_size_y):
+                    if self.map_channel[i, j] == 1:
+                        pygame.draw.rect(screen, (255, 255, 255), (i, j, 1, 1))
+                    if self.coverage_channel[i, j] == 1:
+                        pygame.draw.rect(screen, (0, 255, 0), (i, j, 1, 1))
+                    if self.agent_channel[i, j] == 1:
+                        pygame.draw.rect(screen, (0, 0, 255), (i, j, 1, 1))
+            pygame.display.flip()
+        elif mode == "rgb_array":
+            img = np.zeros((self.image_size_x, self.image_size_y, 3))
+            for i in range(self.image_size_x):
+                for j in range(self.image_size_y):
+                    if self.map_channel[i, j] == 1:
+                        img[i, j] = [255, 255, 255]
+                    if self.coverage_channel[i, j] == 1:
+                        img[i, j] = [0, 255, 0]
+                    if self.agent_channel[i, j] == 1:
+                        img[i, j] = [0, 0, 255]
+            return img
+        
+    def close(self):
+        pygame.display.quit()
+        pygame.quit()
+        
     def get_observation(self):
         return cv2.resize(
             np.stack(
@@ -138,20 +178,20 @@ class CCPP_Env(gym.Env):
         return -self.total_termination_ratio_weight * ratio
 
     def get_reward(self, total_time, coverage):
-        print("total time: ", total_time, "coverage: ", coverage)
+        # print("total time: ", total_time, "coverage: ", coverage)
         return coverage * self.coverage_weight - total_time * self.time_weight
 
     def step(self, action):
         # check if action is termination
         # add reward for taking the reset action
         if action[2] < 0:
-            return self.get_observation(), self.get_reward_termination(), True, {}
+            return self.get_observation(), self.get_reward_termination(), True, False, {}
         # get path from agent to navigation goal
         self.nav_goal = np.array(self.transform_xy_to_map(action[0], action[1]))
         # see if navigation goal is reachable
         viable = self.astar.a_star_search(self.agent_loc, self.nav_goal)
         if not viable:
-            return self.get_observation(), -100, False, {}
+            return self.get_observation(), -100, False, False, {}
         path = self.astar.SmoothPath()
         total_time, coverage = self.sweep_path(path)
         # self.agent_loc = self.nav_goal[0], self.nav_goal[1]
@@ -161,13 +201,14 @@ class CCPP_Env(gym.Env):
             self.get_observation(),
             self.get_reward(total_time, coverage),
             False,
+            False,
             {},
         )
 
     def get_turn_distance(self, veca, vecb):
         adotb = np.dot(veca, vecb)
         abmag = np.linalg.norm(veca) * np.linalg.norm(vecb)
-        return math.acos(adotb / abmag)
+        return math.acos(np.clip(adotb / abmag,-1,1))
 
     def transform_xy_to_map(self, x, y):
         return round((x - self.x_min) * self.scaling), round(

@@ -165,7 +165,7 @@ class Astar:
 
     # Trace the path from source to destination
     def trace_path(self, cell_details, dest):
-        print("The Path is ")
+        # print("The Path is ")
         path = []
         row = dest[0]
         col = dest[1]
@@ -192,19 +192,19 @@ class Astar:
     # Implement the A* search algorithm
     def a_star_search(self, src, dest):
         # Check if the source and destination are valid
-        print("Source: ", src, " Destination: ", dest)
+        # print("Source: ", src, " Destination: ", dest)
         if not self.is_valid(src[0], src[1]) or not self.is_valid(dest[0], dest[1]):
-            print("Source or destination is invalid")
+            # print("Source or destination is invalid")
             return False
 
         # Check if the source and destination are unblocked
         if not self.is_unblocked(src[0], src[1]) or not self.is_unblocked(dest[0], dest[1]):
-            print("Source or the destination is blocked")
+            # print("Source or the destination is blocked")
             return False
 
         # Check if we are already at the destination
         if self.is_destination(src[0], src[1], dest):
-            print("We are already at the destination")
+            # print("We are already at the destination")
             return True
 
         # Initialize the closed list (visited cells)
@@ -251,7 +251,7 @@ class Astar:
                         # Set the parent of the destination cell
                         cell_details[new_i][new_j].parent_i = i
                         cell_details[new_i][new_j].parent_j = j
-                        print("The destination cell is found")
+                        # print("The destination cell is found")
                         # Trace and print the path from source to destination
                         self.trace_path(cell_details, dest)
                         found_dest = True
@@ -274,6 +274,6 @@ class Astar:
                             cell_details[new_i][new_j].parent_j = j
 
         # If the destination is not found after visiting all cells
-        if not found_dest:
-            print("Failed to find the destination cell")
+        # if not found_dest:
+            # print("Failed to find the destination cell")
         return False
