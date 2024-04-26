@@ -31,7 +31,10 @@ class Astar:
         q = queue.Queue()
         start_l = (start[0], start[1])
         # visitedl = [np.asarray([start[0], start[1]])]
-        visitedl = np.zeros((self.unweighted_grid.shape[0], self.unweighted_grid.shape[1]))
+        visitedl = np.zeros(
+            (self.unweighted_grid.shape[0], self.unweighted_grid.shape[1]),
+            dtype=np.uint8,
+        )
         visitedl[start[0]][start[1]] = 1
         visited = [np.asarray([start[0], start[1]])]
         margin = 1
@@ -55,7 +58,7 @@ class Astar:
         return visitedl
 
     def CreateCoverageGrid(self):
-        weighted_grid = np.ones((self.ROW, self.COL))
+        weighted_grid = np.ones((self.ROW, self.COL), dtype=np.float32)
         wall_indices = np.where(self.unweighted_grid == 0)
         margin = 1
         for i, j in zip(wall_indices[0], wall_indices[1]):
@@ -67,7 +70,7 @@ class Astar:
         return weighted_grid
 
     def CreateWeightedGrid(self):
-        weighted_grid = np.ones((self.ROW, self.COL))
+        weighted_grid = np.ones((self.ROW, self.COL), dtype=np.float32)
         wall_indices = np.where(self.unweighted_grid == 0)
         margin = math.ceil(self.vehicle_size/2 + self.margin)
         for i, j in zip(wall_indices[0], wall_indices[1]):
@@ -275,5 +278,5 @@ class Astar:
 
         # If the destination is not found after visiting all cells
         # if not found_dest:
-            # print("Failed to find the destination cell")
+        # print("Failed to find the destination cell")
         return False

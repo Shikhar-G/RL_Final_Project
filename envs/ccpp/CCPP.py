@@ -54,11 +54,13 @@ class CCPP_Env(gym.Env):
         agent_max_angular_speed=1.9,
         scaling=10,
         coverage_radius=1,
+        coverage_required=0.95,
     ):
         # get map properties
         self.scaling = scaling
         self.map_padding = self.scaling
         self.vectormap = get_vectormap(map_file)
+        self.coverage_required = 0.95
 
         # get the size of the image
         self.image_size_x, self.image_size_y = get_image_size(
@@ -74,7 +76,9 @@ class CCPP_Env(gym.Env):
         self.set_map_channel()
 
         # initialize coverage channel
-        self.coverage_channel = np.zeros((self.image_size_x, self.image_size_y))
+        self.coverage_channel = np.zeros(
+            (self.image_size_x, self.image_size_y), dtype=np.uint8
+        )
 
         # initialize agent channel
         self.agent_dims = np.array(
@@ -104,10 +108,11 @@ class CCPP_Env(gym.Env):
         self.possible_start_positions = self.astar.findable_area(
             self.agent_loc)
         self.coverage_possible = np.count_nonzero(self.map_channel_out)
+        self.curr_coverage = 0
         print("coverage possible: ", self.coverage_possible)
         self.action_space = spaces.Box(
-            low=np.array([self.x_min, self.y_min, -1]),
-            high=np.array([self.x_max, self.y_max, 1]),
+            low=np.array([self.x_min, self.y_min]),
+            high=np.array([self.x_max, self.y_max]),
             dtype=np.float32,
         )
 
@@ -115,12 +120,15 @@ class CCPP_Env(gym.Env):
         self.coverage_radius = coverage_radius
         self.time_penalty_per_scaled_meter = 1.0
 
-        self.coverage_weight = 0.3
+        self.coverage_weight = 0.2
         self.time_weight = 1
         self.total_termination_ratio_weight = 1000
 
     def reset(self):
-        self.coverage_channel = np.zeros((self.image_size_x, self.image_size_y))
+        self.coverage_channel = np.zeros(
+            (self.image_size_x, self.image_size_y), dtype=np.uint8
+        )
+        self.curr_coverage = 0
         # randomly sample a start point
         start_index = np.random.randint(0, len(self.possible_start_positions))
         self.agent_loc = self.possible_start_positions[start_index]
@@ -148,7 +156,7 @@ class CCPP_Env(gym.Env):
                         pygame.draw.rect(screen, (0, 0, 255), (i, j, 1, 1))
             pygame.display.flip()
         elif mode == "rgb_array":
-            img = np.zeros((self.image_size_x, self.image_size_y, 3))
+            img = np.zeros((self.image_size_x, self.image_size_y, 3), dtype=np.uint8)
             for i in range(self.image_size_x):
                 for j in range(self.image_size_y):
                     if self.map_channel[i, j] == 1:
@@ -158,11 +166,11 @@ class CCPP_Env(gym.Env):
                     if self.agent_channel[i, j] == 1:
                         img[i, j] = [0, 0, 255]
             return img
-        
+
     def close(self):
         pygame.display.quit()
         pygame.quit()
-        
+
     def get_observation(self):
         return cv2.resize(
             np.stack(
@@ -171,11 +179,11 @@ class CCPP_Env(gym.Env):
             (224, 224),
         )
 
-    def get_reward_termination(self):
-        uncovered = self.coverage_possible - np.count_nonzero(self.coverage_channel)
-        ratio = uncovered / self.coverage_possible
-        print("uncovered: ", uncovered, "ratio: ", ratio)
-        return -self.total_termination_ratio_weight * ratio
+    # def get_reward_termination(self):
+    #     uncovered = self.coverage_possible - np.count_nonzero(self.coverage_channel)
+    #     ratio = uncovered / self.coverage_possible
+    #     print("uncovered: ", uncovered, "ratio: ", ratio)
+    #     return -self.total_termination_ratio_weight * ratio
 
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
@@ -184,8 +192,6 @@ class CCPP_Env(gym.Env):
     def step(self, action):
         # check if action is termination
         # add reward for taking the reset action
-        if action[2] < 0:
-            return self.get_observation(), self.get_reward_termination(), True, False, {}
         # get path from agent to navigation goal
         self.nav_goal = np.array(self.transform_xy_to_map(action[0], action[1]))
         # see if navigation goal is reachable
@@ -194,8 +200,18 @@ class CCPP_Env(gym.Env):
             return self.get_observation(), -100, False, False, {}
         path = self.astar.SmoothPath()
         total_time, coverage = self.sweep_path(path)
+        self.curr_coverage += coverage
         # self.agent_loc = self.nav_goal[0], self.nav_goal[1]
         self.set_agent_channel()
+        # check if agent has reached coverage threshold
+        if self.curr_coverage >= self.coverage_possible * self.coverage_required:
+            return (
+                self.get_observation(),
+                0,
+                True,
+                False,
+                {},
+            )
 
         return (
             self.get_observation(),
@@ -219,7 +235,9 @@ class CCPP_Env(gym.Env):
         return x / self.scaling + self.x_min, y / self.scaling + self.y_min
 
     def set_agent_channel(self):
-        self.agent_channel = np.zeros((self.image_size_x, self.image_size_y))
+        self.agent_channel = np.zeros(
+            (self.image_size_x, self.image_size_y), dtype=np.uint8
+        )
         agent_x, agent_y = self.agent_loc[0], self.agent_loc[1]
         for i in range(
             agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2
@@ -260,7 +278,9 @@ class CCPP_Env(gym.Env):
 
     def set_map_channel(self):
         # first channel is the map, which is a binary image where 0 is empty space and 1 is occupied space
-        self.map_channel = np.zeros((self.image_size_x, self.image_size_y))
+        self.map_channel = np.zeros(
+            (self.image_size_x, self.image_size_y), dtype=np.uint8
+        )
         for line in self.vectormap:
             start_x = round((line["p0"]["x"] - self.x_min) * self.scaling)
             start_y = round((line["p0"]["y"] - self.y_min) * self.scaling)
