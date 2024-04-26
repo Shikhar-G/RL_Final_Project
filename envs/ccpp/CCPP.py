@@ -95,7 +95,7 @@ class CCPP_Env(gym.Env):
         self.observation_space = spaces.Box(
             low=0,
             high=1,
-            shape=(3, self.image_size_x, self.image_size_y),
+            shape=(224, 224, 3),
             dtype=np.uint8,
         )
 
