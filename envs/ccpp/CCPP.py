@@ -60,7 +60,7 @@ class CCPP_Env(gym.Env):
         self.scaling = scaling
         self.map_padding = self.scaling
         self.vectormap = get_vectormap(map_file)
-        self.coverage_required = 0.95
+        self.coverage_required = coverage_required
 
         # get the size of the image
         self.image_size_x, self.image_size_y = get_image_size(
@@ -106,6 +106,7 @@ class CCPP_Env(gym.Env):
             self.agent_loc, use_weighted_grid=False)
         self.possible_start_positions, self.grid_valid_locations = self.astar.findable_area(self.agent_loc)
         self.coverage_possible = np.count_nonzero(self.map_channel_out)
+        self.coverage_channel_out = self.map_channel_out.copy()
         self.curr_coverage = 0
         print("coverage possible: ", self.coverage_possible)
         self.action_space = spaces.Box(
@@ -119,13 +120,14 @@ class CCPP_Env(gym.Env):
         self.time_penalty_per_scaled_meter = 1.0
 
         self.coverage_weight = 1
-        self.time_weight = 0.1
+        self.time_weight = 0.5
         self.total_termination_ratio_weight = 1000
 
     def reset(self):
         self.coverage_channel = np.zeros(
             (self.image_size_x, self.image_size_y), dtype=np.uint8
         )
+        self.coverage_channel_out = self.map_channel_out.copy()
         self.curr_coverage = 0
         # randomly sample a start point
         start_index = np.random.randint(0, len(self.possible_start_positions))
@@ -172,7 +174,7 @@ class CCPP_Env(gym.Env):
     def get_observation(self):
         return cv2.resize(
             np.stack(
-                [self.map_channel_out, self.agent_channel, self.coverage_channel]
+                [self.map_channel_out, self.agent_channel, self.coverage_channel_out]
             ).transpose(1, 2, 0),
             (224, 224),
         )
@@ -185,7 +187,7 @@ class CCPP_Env(gym.Env):
 
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
-        return coverage * self.coverage_weight - total_time * self.time_weight
+        return coverage/self.scaling * self.coverage_weight - total_time * self.time_weight
     
     def check_next_step(self, action):
         if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
@@ -259,33 +261,33 @@ class CCPP_Env(gym.Env):
                 self.agent_channel[i, j] = 1
         # fill in one square on the perimeter of the map to indicate the direction of the agent
 
-        # get the center of the map
-        old_x = self.image_size_x // 2
-        old_y = self.image_size_y // 2
-        x = self.image_size_x // 2
-        y = self.image_size_y // 2
-        # move in the direction of the agent until we hit the edge of the map
-        dir = self.agent_dir * self.scaling
-        while self.is_valid(x, y):
-            x += round(dir[0])
-            y += round(dir[1])
-        # set the pixel at the edge of the map to 1
-        box_size = max(self.map_padding // 4, 1)
-        if x < 0:
-            x = box_size
-        elif x >= self.image_size_x:
-            x = self.image_size_x - 1 - box_size
-        if y < 0:
-            y = box_size
-        elif y >= self.image_size_y:
-            y = self.image_size_y - 1 - box_size
+        # # get the center of the map
+        # old_x = self.image_size_x // 2
+        # old_y = self.image_size_y // 2
+        # x = self.image_size_x // 2
+        # y = self.image_size_y // 2
+        # # move in the direction of the agent until we hit the edge of the map
+        # dir = self.agent_dir * self.scaling
+        # while self.is_valid(x, y):
+        #     x += round(dir[0])
+        #     y += round(dir[1])
+        # # set the pixel at the edge of the map to 1
+        # box_size = max(self.map_padding // 4, 1)
+        # if x < 0:
+        #     x = box_size
+        # elif x >= self.image_size_x:
+        #     x = self.image_size_x - 1 - box_size
+        # if y < 0:
+        #     y = box_size
+        # elif y >= self.image_size_y:
+        #     y = self.image_size_y - 1 - box_size
 
-        # draw a box around the pixel of 0.5m
-        for i in range(max(x - box_size, 0), min(x + box_size + 1, self.image_size_x)):
-            for j in range(
-                max(y - box_size, 0), min(y + box_size + 1, self.image_size_y)
-            ):
-                self.agent_channel[i, j] = 1
+        # # draw a box around the pixel of 0.5m
+        # for i in range(max(x - box_size, 0), min(x + box_size + 1, self.image_size_x)):
+        #     for j in range(
+        #         max(y - box_size, 0), min(y + box_size + 1, self.image_size_y)
+        #     ):
+        #         self.agent_channel[i, j] = 1
 
     def set_map_channel(self):
         # first channel is the map, which is a binary image where 0 is empty space and 1 is occupied space
@@ -384,6 +386,7 @@ class CCPP_Env(gym.Env):
 
                     # set the coverage channel to 1
                     self.coverage_channel[round(rad_pos[0]), round(rad_pos[1])] = 1
+                    self.coverage_channel_out[round(rad_pos[0]), round(rad_pos[1])] = 0
                     # calculate the pre-requisite for the reward function
                     # assign the new position
                     rad_pos = [
@@ -402,6 +405,7 @@ class CCPP_Env(gym.Env):
                     # same as above but for the negative direction
 
                     self.coverage_channel[round(rad_neg[0]), round(rad_neg[1])] = 1
+                    self.coverage_channel_out[round(rad_neg[0]), round(rad_neg[1])] = 0
 
                     rad_neg = [
                         rad_neg[0] - heading_rad_inc[0],
@@ -440,6 +444,7 @@ class CCPP_Env(gym.Env):
                 ):
 
                     self.coverage_channel[round(rad_pos[0]), round(rad_pos[1])] = 1
+                    self.coverage_channel_out[round(rad_pos[0]), round(rad_pos[1])] = 0
 
                     rad_pos = [
                         rad_pos[0] + heading_rad_inc[0],
@@ -455,6 +460,7 @@ class CCPP_Env(gym.Env):
                 ):
                     round_rad_neg = [round(rad_neg[0]), round(rad_neg[1])]
                     self.coverage_channel[round(rad_neg[0]), round(rad_neg[1])] = 1
+                    self.coverage_channel_out[round(rad_neg[0]), round(rad_neg[1])] = 0
 
                     rad_neg = [
                         rad_neg[0] - heading_rad_inc[0],
@@ -484,4 +490,4 @@ class CCPP_Env(gym.Env):
             # total_length += segment_length
             total_time += turn_time + linear_time
         new_coverage = np.count_nonzero(self.coverage_channel) - old_coverage
-        return total_time, new_coverage / self.scaling
+        return total_time, new_coverage

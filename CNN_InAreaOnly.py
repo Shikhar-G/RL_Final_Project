@@ -19,14 +19,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # argument parser
 args = easydict.EasyDict(
     {
-        "batch_size": 32,
+        "batch_size": 16,
         "gamma": 0.99,
         "lambda": 0.95,
         "eps_clip": 0.2,
         "buffer_size": 64,
         "epochs": 10,
         "lr": 5e-6,
-        "max_episode_length": 512,
+        "max_episode_length": 128,
         "num_episodes": 32,
         "enable_cuda": True,
         "device" : device
@@ -57,7 +57,7 @@ class CCPP_Actor(nn.Module):
         self.features.add_module("tanh1", nn.Tanh())
         self.features.add_module("lin2", nn.Linear(512, 512))
         self.features.add_module("tanh2", nn.Tanh())
-        self.features.add_module("lin3", nn.Linear(512, 4))
+        self.features.add_module("lin3", nn.Linear(512, 2))
 
     def forward(self, x):
         out = self.resnet(x)
@@ -82,23 +82,26 @@ class CCPP_Critic(nn.Module):
         out = self.features(out)
         return out
 
+def convert_action(action):
+    env.possible_start_positions
+    clip_action = torch.clip(action, -100, 100)
+    index_to_pos = len(env.possible_start_positions)*(clip_action + 100)/200 
+    env_position = env.possible_start_positions[(round(torch.clip(index_to_pos,0, len(env.possible_start_positions) - 1).detach().cpu().numpy()[0]))]
+    converted_action = np.array([env_position[0]/env.scaling + env.x_min, env_position[1]/env.scaling + env.y_min])
 
+    return converted_action
 def get_action(policy_output):
-    action_meanx, action_stdx, action_meany, action_stdy = (
+    action_mean, action_std = (
         policy_output[:, 0],
-        policy_output[:, 1],
-        policy_output[:, 2],
-        policy_output[:, 3],
+        policy_output[:, 1]
     )
-    action_stdx = torch.exp(action_stdx)
-    action_stdy = torch.exp(action_stdy)
-    distx = distributions.Normal(action_meanx, action_stdx)
-    disty = distributions.Normal(action_meany, action_stdy)
-    actionx = distx.sample()
-    actiony = disty.sample()
-    log_probx = distx.log_prob(actionx)
-    log_proby = disty.log_prob(actiony)
-    return torch.cat([actionx, actiony]), log_probx + log_proby
+    action_std = torch.exp(action_std)
+    dist = distributions.Normal(action_mean, action_std)
+
+    action = dist.sample()
+    log_prob = dist.log_prob(action)
+
+    return convert_action(action), log_prob
 
 
 def compute_gae(
@@ -114,22 +117,24 @@ def compute_gae(
     return returns.detach()
 
 
-def ppo_iter(mini_batch_size, states, actions, log_probs, returns, advantage):
-    batch_size = states.shape[0]
-    for _ in range(batch_size // mini_batch_size):
-        rand_ids = torch.randint(0, batch_size, (mini_batch_size,))
-        yield states[rand_ids], actions[rand_ids], log_probs[rand_ids], returns[
-            rand_ids
-        ], advantage[rand_ids]
 # def ppo_iter(mini_batch_size, states, actions, log_probs, returns, advantage):
 #     batch_size = states.shape[0]
-#     # shuffle the states
-#     indices = np.arange(batch_size)
-#     np.random.shuffle(indices)
-#     for i in range(batch_size // mini_batch_size):
-#         # get the indices of the current mini-batch
-#         ind = indices[i * mini_batch_size : (i + 1) * mini_batch_size]
-#         yield states[ind], actions[ind], log_probs[ind], returns[ind], advantage[ind]
+#     for _ in range(batch_size // mini_batch_size):
+#         rand_ids = torch.randint(0, batch_size, (mini_batch_size,))
+#         yield states[rand_ids], actions[rand_ids], log_probs[rand_ids], returns[
+#             rand_ids
+#         ], advantage[rand_ids]
+
+def ppo_iter(mini_batch_size, states, log_probs, returns, advantage):
+    batch_size = states.shape[0]
+    # shuffle the states
+    indices = np.arange(batch_size)
+    np.random.shuffle(indices)
+    for i in range(batch_size // mini_batch_size):
+        # get the indices of the current mini-batch
+        ind = indices[i * mini_batch_size : (i + 1) * mini_batch_size]
+        yield states[ind], log_probs[ind], returns[ind], advantage[ind]
+
 
 def preprocess_input(x):
     preprocess = transforms.Compose(
@@ -191,7 +196,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
 
             action, log_prob = get_action(policy.detach().cpu())
             next_state, reward, done, truncated, info = env.step(
-                action.detach().cpu().numpy()
+                action
             )
             mask = 1 if not done else 0
 
@@ -201,7 +206,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
             if reward == 0:
                 num_blocked += 1
 
-            action_buffer.append(action.detach())
+            action_buffer.append(action)
             log_prob_buffer.append(log_prob.detach())
             reward_buffer.append(reward)
             mask_buffer.append(mask)
@@ -216,10 +221,10 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         returns = compute_gae(next_value, reward_buffer, mask_buffer, value_buffer)
 
         states = torch.stack(state_buffer)
-        actions = torch.stack(action_buffer)
+        # actions = torch.stack(action_buffer)
         log_probs = torch.cat(log_prob_buffer)
         advantages = returns - torch.tensor(value_buffer)
-
+        # print(actions[0])
         env.render()
         time.sleep(2)
         env.close()
@@ -233,12 +238,11 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         for _ in tqdm(range(args["epochs"])):
             for (
                 batch_state,
-                batch_action,
                 batch_log_probs,
                 batch_return,
                 batch_advantage,
             ) in ppo_iter(
-                args["batch_size"], states, actions, log_probs, returns, advantages
+                args["batch_size"], states, log_probs, returns, advantages
             ):
                 actor_optim.zero_grad()
                 critic_optim.zero_grad()
@@ -268,8 +272,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 critic_optim.step()
 
         # print("Evaluation")
-        torch.save(actor.state_dict(), "checkpoints/actor_{}.pth".format(i))
-        torch.save(critic.state_dict(), "checkpoints/critic_{}.pth".format(i))
+        torch.save(actor.state_dict(), "checkpoints_area/actor_{}.pth".format(i))
+        torch.save(critic.state_dict(), "checkpoints_area/critic_{}.pth".format(i))
         # # evaluate the model
         # actor.eval()
         # critic.eval()
@@ -302,8 +306,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
 
 actor = CCPP_Actor()
 critic = CCPP_Critic()
-actor.load_state_dict(torch.load("checkpoints/actor.pth"))
-critic.load_state_dict(torch.load("checkpoints/critic.pth"))
+# actor.load_state_dict(torch.load("checkpoints_area/actor_17.pth"))
+# critic.load_state_dict(torch.load("checkpoints_area/critic_17.pth"))
 actor = actor.float()
 critic = critic.float()
 actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
