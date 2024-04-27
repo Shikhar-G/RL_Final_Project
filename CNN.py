@@ -19,14 +19,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # argument parser
 args = easydict.EasyDict(
     {
-        "batch_size": 16,
+        "batch_size": 32,
         "gamma": 0.99,
         "lambda": 0.95,
         "eps_clip": 0.2,
         "buffer_size": 64,
         "epochs": 10,
         "lr": 5e-6,
-        "max_episode_length": 256,
+        "max_episode_length": 512,
         "num_episodes": 32,
         "enable_cuda": True,
         "device" : device
@@ -166,6 +166,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         value_buffer = []
         total_reward = 0
         num_invalid = 0
+        num_blocked = 0
         done = False
         curr_step = 0
 
@@ -189,6 +190,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
             total_reward += reward
             if reward == -5:
                 num_invalid += 1
+            if reward == 0:
+                num_blocked += 1
 
             action_buffer.append(action.detach())
             log_prob_buffer.append(log_prob.detach())
@@ -212,8 +215,9 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         env.render()
         time.sleep(2)
         env.close()
-        print("Number of invalid actions: ", num_invalid)
-        print(f"Episode {i} Total Reward: {total_reward}\n")
+        print("\nNumber of blocked actions: ", num_blocked)
+        print("\nNumber of invalid actions: ", num_invalid)
+        print(f"\nEpisode {i} Total Reward: {total_reward}\n")
 
         # PPO update
         actor.train()
@@ -256,8 +260,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 critic_optim.step()
 
         # print("Evaluation")
-        # torch.save(actor.state_dict(), "checkpoints/actor_{}.pth".format(i))
-        # torch.save(critic.state_dict(), "checkpoints/critic_{}.pth".format(i))
+        torch.save(actor.state_dict(), "checkpoints/actor_{}.pth".format(i))
+        torch.save(critic.state_dict(), "checkpoints/critic_{}.pth".format(i))
         # # evaluate the model
         # actor.eval()
         # critic.eval()
