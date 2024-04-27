@@ -14,6 +14,8 @@ import numpy as np
 from tqdm import tqdm
 import json
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # argument parser
 args = easydict.EasyDict(
     {
@@ -22,11 +24,12 @@ args = easydict.EasyDict(
         "lambda": 0.95,
         "eps_clip": 0.2,
         "buffer_size": 64,
-        "epochs": 4,
-        "lr": 3e-4,
-        "max_episode_length": 32,
-        "num_episodes": 50,
+        "epochs": 10,
+        "lr": 5e-6,
+        "max_episode_length": 256,
+        "num_episodes": 32,
         "enable_cuda": True,
+        "device" : device
     }
 )
 
@@ -52,9 +55,9 @@ class CCPP_Actor(nn.Module):
         self.features.add_module("flatten", nn.Flatten())
         self.features.add_module("lin1", nn.Linear(512, 512))
         self.features.add_module("tanh1", nn.Tanh())
-        self.features.add_module("lin2", nn.Linear(512, 256))
+        self.features.add_module("lin2", nn.Linear(512, 512))
         self.features.add_module("tanh2", nn.Tanh())
-        self.features.add_module("lin3", nn.Linear(256, 4))
+        self.features.add_module("lin3", nn.Linear(512, 4))
 
     def forward(self, x):
         out = self.resnet(x)
@@ -70,9 +73,9 @@ class CCPP_Critic(nn.Module):
         self.features.add_module("flatten", nn.Flatten())
         self.features.add_module("lin1", nn.Linear(512, 512))
         self.features.add_module("tanh1", nn.Tanh())
-        self.features.add_module("lin2", nn.Linear(512, 256))
+        self.features.add_module("lin2", nn.Linear(512, 512))
         self.features.add_module("tanh2", nn.Tanh())
-        self.features.add_module("lin3", nn.Linear(256, 1))
+        self.features.add_module("lin3", nn.Linear(512, 1))
 
     def forward(self, x):
         out = self.resnet(x)
@@ -146,6 +149,9 @@ def preprocess_input_batched(x):
 
 
 def train(actor, critic, actor_optim, critic_optim, env, args):
+    device = args["device"]
+    actor = actor.to(device)
+    critic = critic.to(device)
     for i in tqdm(range(args["num_episodes"])):
         actor.eval()
         critic.eval()
@@ -158,7 +164,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         reward_buffer = []
         mask_buffer = []
         value_buffer = []
-
+        total_reward = 0
+        num_invalid = 0
         done = False
         curr_step = 0
 
@@ -170,33 +177,43 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
 
             state_buffer.append(torch.from_numpy(state))
             state = np.array(state, dtype=np.double)
-            state = preprocess_input(state)
+            state = preprocess_input(state).to(device)
             policy, value = actor(state), critic(state)
 
-            action, log_prob = get_action(policy)
+            action, log_prob = get_action(policy.detach().cpu())
             next_state, reward, done, truncated, info = env.step(
-                action.detach().numpy()
+                action.detach().cpu().numpy()
             )
             mask = 1 if not done else 0
+
+            total_reward += reward
+            if reward == -5:
+                num_invalid += 1
 
             action_buffer.append(action.detach())
             log_prob_buffer.append(log_prob.detach())
             reward_buffer.append(reward)
             mask_buffer.append(mask)
-            value_buffer.append(value.detach())
+            value_buffer.append(value.detach().cpu())
             state = next_state
             curr_step += 1
             prog_bar.update(1)
 
         # state_buffer_file.close()
-        next_state = preprocess_input(next_state)
-        next_value = critic(next_state)
+        next_state = preprocess_input(next_state).to(device)
+        next_value = critic(next_state).detach().cpu()
         returns = compute_gae(next_value, reward_buffer, mask_buffer, value_buffer)
 
         states = torch.stack(state_buffer)
         actions = torch.stack(action_buffer)
         log_probs = torch.cat(log_prob_buffer)
         advantages = returns - torch.tensor(value_buffer)
+
+        env.render()
+        time.sleep(2)
+        env.close()
+        print("Number of invalid actions: ", num_invalid)
+        print(f"Episode {i} Total Reward: {total_reward}\n")
 
         # PPO update
         actor.train()
@@ -215,55 +232,60 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 critic_optim.zero_grad()
                 if len(batch_state.shape) == 3:
                     batch_state = np.array(batch_state, dtype=np.double)
-                    batch_state = preprocess_input(batch_state)
+                    batch_state = preprocess_input(batch_state).to(device)
                 # batched
                 else:
-                    batch_state = preprocess_input_batched(batch_state)
+                    batch_state = preprocess_input_batched(batch_state).to(device)
                 policy, value = actor(batch_state), critic(batch_state)
 
                 action, log_prob = get_action(policy)
 
-                ratio = torch.exp(log_prob - batch_log_probs)
-                surr1 = ratio * batch_advantage
+                ratio = torch.exp(log_prob - batch_log_probs.to(device))
+                surr1 = ratio * batch_advantage.to(device)
                 surr2 = (
                     torch.clamp(ratio, 1.0 - args["eps_clip"], 1.0 + args["eps_clip"])
-                    * batch_advantage
+                    * batch_advantage.to(device)
                 )
 
-                actor_loss = -torch.min(surr1, surr2).mean()
-                critic_loss = (batch_return - value).pow(2).mean()
-                print("actor backwards")
+                actor_loss = (-torch.min(surr1, surr2)).mean()
+                critic_loss = (batch_return.to(device) - value).pow(2).mean()
+
                 actor_loss.backward()
                 actor_optim.step()
-                print("critic backwards")
                 critic_loss.backward()
                 critic_optim.step()
 
-    print("Evaluation")
-    torch.save(actor.state_dict(), "checkpoints/actor_{}.pth".format(i))
-    torch.save(critic.state_dict(), "checkpoints/critic_{}.pth".format(i))
-    # evaluate the model
-    actor.eval()
-    critic.eval()
-    state, info = env.reset()
-    done = False
-    total_reward = 0
-    curr_step = 0
-    prog_bar = tqdm(total=args["max_episode_length"])
-    while not done and curr_step < args["max_episode_length"]:
-        state = np.array(state, dtype=np.double)
-        state = preprocess_input(state)
-        policy, _ = actor(state), critic(state)
-        action, _ = get_action(policy)
-        action = action.detach().numpy()
-        next_state, reward, done, truncated, info = env.step(action)
-        total_reward += reward
-        state = next_state
-        curr_step += 1
-        prog_bar.update(1)
+        # print("Evaluation")
+        # torch.save(actor.state_dict(), "checkpoints/actor_{}.pth".format(i))
+        # torch.save(critic.state_dict(), "checkpoints/critic_{}.pth".format(i))
+        # # evaluate the model
+        # actor.eval()
+        # critic.eval()
+        # state, info = env.reset()
+        # done = False
+        # total_reward = 0
+        # curr_step = 0
+        # prog_bar = tqdm(total=args["max_episode_length"])
+        # num_invalid = 0
+        # while not done and curr_step < args["max_episode_length"]:
+        #     state = np.array(state, dtype=np.double)
+        #     state = preprocess_input(state).to(device)
+        #     policy, _ = actor(state), critic(state)
+        #     action, _ = get_action(policy)
+        #     action = action.detach().cpu().numpy()
+        #     next_state, reward, done, truncated, info = env.step(action)
+        #     total_reward += reward
+        #     if reward == -50:
+        #         num_invalid += 1
+        #     state = next_state
+        #     curr_step += 1
+        #     prog_bar.update(1)
+        #     # env.render()
+        #     # time.sleep(2)
         # env.render()
         # time.sleep(2)
-    print(f"Episode {i} Total Reward: {total_reward}")
+        # print("Number of invalid actions: ", num_invalid)
+        # print(f"Episode {i} Total Reward: {total_reward}\n")
 
 
 actor = CCPP_Actor()

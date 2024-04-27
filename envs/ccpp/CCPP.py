@@ -102,11 +102,9 @@ class CCPP_Env(gym.Env):
         # #navigation goal input, 2D vector
         inverted_map = 1 - self.map_channel
         self.astar = Astar(inverted_map, max(self.agent_dims), 0)
-        self.map_channel_out = self.astar.findable_area(
-            self.agent_loc, use_weighted_grid=False, return_visited=False
-        )
-        self.possible_start_positions = self.astar.findable_area(
-            self.agent_loc)
+        _, self.map_channel_out = self.astar.findable_area(
+            self.agent_loc, use_weighted_grid=False)
+        self.possible_start_positions, self.grid_valid_locations = self.astar.findable_area(self.agent_loc)
         self.coverage_possible = np.count_nonzero(self.map_channel_out)
         self.curr_coverage = 0
         print("coverage possible: ", self.coverage_possible)
@@ -120,8 +118,8 @@ class CCPP_Env(gym.Env):
         self.coverage_radius = coverage_radius
         self.time_penalty_per_scaled_meter = 1.0
 
-        self.coverage_weight = 0.2
-        self.time_weight = 1
+        self.coverage_weight = 1
+        self.time_weight = 0.1
         self.total_termination_ratio_weight = 1000
 
     def reset(self):
@@ -188,6 +186,15 @@ class CCPP_Env(gym.Env):
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
         return coverage * self.coverage_weight - total_time * self.time_weight
+    
+    def check_next_step(self, action):
+        if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
+            return False
+        elif not self.astar.is_unblocked(self.nav_goal[0], self.nav_goal[1]):
+            return False
+        elif (self.grid_valid_locations[self.nav_goal[0], self.nav_goal[1]] == 0):
+            return False
+        return True
 
     def step(self, action):
         # check if action is termination
@@ -195,9 +202,13 @@ class CCPP_Env(gym.Env):
         # get path from agent to navigation goal
         self.nav_goal = np.array(self.transform_xy_to_map(action[0], action[1]))
         # see if navigation goal is reachable
-        viable = self.astar.a_star_search(self.agent_loc, self.nav_goal)
-        if not viable:
-            return self.get_observation(), -100, False, False, {}
+        if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
+            return self.get_observation(), -5, False, False, {}
+        elif not self.astar.is_unblocked(self.nav_goal[0], self.nav_goal[1]):
+            return self.get_observation(), 0, False, False, {}
+        elif (self.grid_valid_locations[self.nav_goal[0], self.nav_goal[1]] == 0 or 
+            not self.astar.a_star_search(self.agent_loc, self.nav_goal)):
+            return self.get_observation(), -5, False, False, {}
         path = self.astar.SmoothPath()
         total_time, coverage = self.sweep_path(path)
         self.curr_coverage += coverage
@@ -207,7 +218,7 @@ class CCPP_Env(gym.Env):
         if self.curr_coverage >= self.coverage_possible * self.coverage_required:
             return (
                 self.get_observation(),
-                0,
+                1000,
                 True,
                 False,
                 {},

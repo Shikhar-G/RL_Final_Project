@@ -23,9 +23,10 @@ class Astar:
         self.unweighted_grid = grid
         self.coverage_grid = self.CreateCoverageGrid()
         self.weighted_grid = self.CreateWeightedGrid()
+        
 
     # Define the size of the grid
-    def findable_area(self, start, use_weighted_grid=True, return_visited=True):
+    def findable_area(self, start, use_weighted_grid=True):
         directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
         visited = dict()
         q = queue.Queue()
@@ -53,9 +54,7 @@ class Astar:
                     visitedl[new_i][new_j] = 1
                     visited.append(np.asarray([new_i, new_j]))
                     q.put((new_i, new_j))
-        if return_visited:
-            return visited
-        return visitedl
+        return visited, visitedl
 
     def CreateCoverageGrid(self):
         weighted_grid = np.ones((self.ROW, self.COL), dtype=np.float32)
