@@ -304,14 +304,49 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         # print(f"Episode {i} Total Reward: {total_reward}\n")
 
 
+def eval(actor, env):
+    actor.eval()
+    state, info = env.reset()
+    done = False
+    total_reward = 0
+    curr_step = 0
+    prog_bar = tqdm(total=10000)
+    milestone = 0.1
+    num_invalid = 0
+    while not done and curr_step < 10000:
+        state = np.array(state, dtype=np.double)
+        state = preprocess_input(state).to(device)
+        policy = actor(state)
+        action, _ = get_action(policy)
+        next_state, reward, done, truncated, info = env.step(action)
+        total_reward += reward
+        state = next_state
+        if env.curr_coverage / env.coverage_possible >= milestone:
+            print(f"Coverage: {milestone} hit at step {curr_step}")
+            milestone += 0.1
+        curr_step += 1
+        prog_bar.update(1)
+        # env.render()
+        # time.sleep(2)
+    env.render()
+    time.sleep(2)
+    print("Number of invalid actions: ", num_invalid)
+    print(f"Total Reward: {total_reward}\n")
+
+
+# actor = CCPP_Actor()
+# critic = CCPP_Critic()
+# # actor.load_state_dict(torch.load("checkpoints_area/actor_17.pth"))
+# # critic.load_state_dict(torch.load("checkpoints_area/critic_17.pth"))
+# actor = actor.float()
+# critic = critic.float()
+# actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
+# critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
+
+
+# train(actor, critic, actor_optim, critic_optim, env, args)
+
 actor = CCPP_Actor()
-critic = CCPP_Critic()
-# actor.load_state_dict(torch.load("checkpoints_area/actor_17.pth"))
-# critic.load_state_dict(torch.load("checkpoints_area/critic_17.pth"))
+actor.load_state_dict(torch.load("actor_9.pth", map_location=torch.device("cpu")))
 actor = actor.float()
-critic = critic.float()
-actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
-critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
-
-
-train(actor, critic, actor_optim, critic_optim, env, args)
+eval(actor, env)

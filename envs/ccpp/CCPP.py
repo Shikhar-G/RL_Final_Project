@@ -119,8 +119,8 @@ class CCPP_Env(gym.Env):
         self.coverage_radius = coverage_radius
         self.time_penalty_per_scaled_meter = 1.0
 
-        self.coverage_weight = 1
-        self.time_weight = 0.5
+        self.coverage_weight = 0.1
+        self.time_weight = 0.025
         self.total_termination_ratio_weight = 1000
 
     def reset(self):
@@ -188,7 +188,7 @@ class CCPP_Env(gym.Env):
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
         return coverage/self.scaling * self.coverage_weight - total_time * self.time_weight
-    
+
     def check_next_step(self, action):
         if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
             return False
@@ -220,7 +220,7 @@ class CCPP_Env(gym.Env):
         if self.curr_coverage >= self.coverage_possible * self.coverage_required:
             return (
                 self.get_observation(),
-                1000,
+                100,
                 True,
                 False,
                 {},

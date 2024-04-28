@@ -18,7 +18,6 @@ import json
 # class RandPolicy(nn.Module):
 #     def __init__(self):
 #         super(RandPolicy, self).__init__()
-        
 
 
 args = {
@@ -32,25 +31,26 @@ total_reward = 0
 curr_step = 0
 prog_bar = tqdm(total=args["max_episode_length"])
 num_invalid = 0
+state_space = env.possible_start_positions
+np.random.shuffle(state_space)
+milestone = 0.1
 while not done and curr_step < args["max_episode_length"]:
-    state_space = sorted(iter(env.possible_start_positions))
     for state in state_space:
         if env.coverage_channel_out[state[0], state[1]] == 1:
             action = state
             break
-    action_x = action[0]/env.scaling + env.x_min
-    action_y = action[1]/env.scaling + env.y_min
-    np_action = np.array([action_x, action_y])
-    next_state, reward, done, truncated, info = env.step(np_action)
+    action_x, action_y = env.transform_map_to_xy(*action)
+    next_state, reward, done, truncated, info = env.step(np.array([action_x, action_y]))
     total_reward += reward
-    if reward == -5:
-        num_invalid += 1
     state = next_state
     curr_step += 1
     prog_bar.update(1)
+    if env.curr_coverage / env.coverage_possible >= milestone:
+        print(f"Coverage: {milestone} hit at step {curr_step}")
+        milestone += 0.1
     # env.render()
     # time.sleep(2)
 env.render()
 time.sleep(2)
-print("Number of invalid actions: ", num_invalid)
+print("")
 print(f"Total Reward: {total_reward}\n")
