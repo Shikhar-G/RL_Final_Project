@@ -25,7 +25,7 @@ args = easydict.EasyDict(
         "eps_clip": 0.2,
         "buffer_size": 64,
         "epochs": 10,
-        "lr": 5e-6,
+        "lr": 5e-5,
         "max_episode_length": 128,
         "num_episodes": 32,
         "enable_cuda": True,
@@ -306,12 +306,12 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
 
 actor = CCPP_Actor()
 critic = CCPP_Critic()
-# actor.load_state_dict(torch.load("checkpoints_area/actor_17.pth"))
-# critic.load_state_dict(torch.load("checkpoints_area/critic_17.pth"))
+# actor.load_state_dict(torch.load("checkpoints_area/actor_01.pth"))
+# critic.load_state_dict(torch.load("checkpoints_area/critic_01.pth"))
 actor = actor.float()
 critic = critic.float()
-actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
-critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
+actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr, betas=(0.999,0.999), weight_decay=1e-5)
+critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr, betas=(0.999,0.999), weight_decay=1e-5)
 
 
 train(actor, critic, actor_optim, critic_optim, env, args)

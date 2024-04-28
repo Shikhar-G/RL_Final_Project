@@ -119,8 +119,8 @@ class CCPP_Env(gym.Env):
         self.coverage_radius = coverage_radius
         self.time_penalty_per_scaled_meter = 1.0
 
-        self.coverage_weight = 1
-        self.time_weight = 0.5
+        self.coverage_weight = 0.05
+        self.time_weight = 0.01
         self.total_termination_ratio_weight = 1000
 
     def reset(self):
