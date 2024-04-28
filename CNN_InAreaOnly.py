@@ -25,7 +25,7 @@ args = easydict.EasyDict(
         "eps_clip": 0.2,
         "buffer_size": 64,
         "epochs": 10,
-        "lr": 5e-6,
+        "lr": 5e-5,
         "max_episode_length": 128,
         "num_episodes": 32,
         "enable_cuda": True,
