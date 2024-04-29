@@ -5,7 +5,7 @@ from gymnasium import spaces
 import numpy as np
 import json
 import math
-from envs.ccpp.Astar import Astar
+from Astar import Astar
 import cv2
 
 
@@ -15,7 +15,7 @@ def get_vectormap(map_file):
     return data
 
 
-def get_image_size(vectormap, scaling=10, padding=0):
+def get_image_size(vectormap, scaling=10):
     # get the size of the image
     x = []
     y = []
@@ -23,10 +23,7 @@ def get_image_size(vectormap, scaling=10, padding=0):
         for point in line:
             x.append(line[point]["x"])
             y.append(line[point]["y"])
-    return (
-        math.ceil(max(x) - min(x)) * scaling + padding * 2,
-        math.ceil(max(y) - min(y)) * scaling + padding * 2,
-    )
+    return (math.ceil(max(x) - min(x)) * scaling, math.ceil(max(y) - min(y)) * scaling)
 
 
 def get_image_min_max(vectormap):
@@ -46,7 +43,7 @@ class CCPP_Env(gym.Env):
     def __init__(
         self,
         render_mode=None,
-        map_file="CDL_Ground.vectormap.json",
+        map_file="maps/CDL_Ground.vectormap.json",
         agent_dims=np.array([1, 1]),
         agent_loc=np.array([0, 0]),
         agent_dir=np.array([0, 1]),
@@ -54,7 +51,7 @@ class CCPP_Env(gym.Env):
         agent_max_angular_speed=1.9,
         scaling=10,
         coverage_radius=1,
-        coverage_required=0.95,
+        coverage_required=0.9,
     ):
         # get map properties
         self.scaling = scaling
@@ -63,9 +60,15 @@ class CCPP_Env(gym.Env):
         self.coverage_required = coverage_required
 
         # get the size of the image
-        self.image_size_x, self.image_size_y = get_image_size(
-            self.vectormap, scaling, self.map_padding
-        )
+        self.image_size_x, self.image_size_y = get_image_size(self.vectormap, scaling)
+        # pad so that x and y are even, we will add padding on both sides
+        if self.image_size_x % 2 == 1:
+            self.image_size_x += 1
+        if self.image_size_y % 2 == 1:
+            self.image_size_y += 1
+
+        self.image_size_x += self.map_padding * 2
+        self.image_size_y += self.map_padding * 2
 
         # get min values for the offset
         self.x_min, self.y_min, self.x_max, self.y_max = get_image_min_max(
@@ -93,18 +96,22 @@ class CCPP_Env(gym.Env):
 
         # make the observation space with 3 channels: 1 for the map, 1 for the agent, 1 for spaces visited
         self.observation_space = spaces.Box(
-            low=0,
+            low=-1,
             high=1,
-            shape=(224, 224, 3),
-            dtype=np.uint8,
+            shape=(3, self.image_size_x, self.image_size_y),
+            dtype=np.int8,
         )
 
         # #navigation goal input, 2D vector
         inverted_map = 1 - self.map_channel
         self.astar = Astar(inverted_map, max(self.agent_dims), 0)
         _, self.map_channel_out = self.astar.findable_area(
-            self.agent_loc, use_weighted_grid=False)
-        self.possible_start_positions, self.grid_valid_locations = self.astar.findable_area(self.agent_loc)
+            self.agent_loc, use_weighted_grid=False
+        )
+
+        self.possible_start_positions, self.grid_valid_locations = (
+            self.astar.findable_area(self.agent_loc)
+        )
         self.coverage_possible = np.count_nonzero(self.map_channel_out)
         self.coverage_channel_out = self.map_channel_out.copy()
         self.curr_coverage = 0
@@ -172,12 +179,10 @@ class CCPP_Env(gym.Env):
         pygame.quit()
 
     def get_observation(self):
-        return cv2.resize(
-            np.stack(
-                [self.map_channel_out, self.agent_channel, self.coverage_channel_out]
-            ).transpose(1, 2, 0),
-            (224, 224),
-        )
+        obs = np.stack(
+            [self.map_channel, self.agent_channel, self.coverage_channel], axis=0
+        ).astype(np.int8)
+        return obs * 2 - 1  # normalize to -1 to 1
 
     # def get_reward_termination(self):
     #     uncovered = self.coverage_possible - np.count_nonzero(self.coverage_channel)
@@ -187,14 +192,17 @@ class CCPP_Env(gym.Env):
 
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
-        return coverage/self.scaling * self.coverage_weight - total_time * self.time_weight
+        return (
+            coverage / self.scaling * self.coverage_weight
+            - total_time * self.time_weight
+        )
 
     def check_next_step(self, action):
         if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
             return False
         elif not self.astar.is_unblocked(self.nav_goal[0], self.nav_goal[1]):
             return False
-        elif (self.grid_valid_locations[self.nav_goal[0], self.nav_goal[1]] == 0):
+        elif self.grid_valid_locations[self.nav_goal[0], self.nav_goal[1]] == 0:
             return False
         return True
 
@@ -208,8 +216,9 @@ class CCPP_Env(gym.Env):
             return self.get_observation(), -5, False, False, {}
         elif not self.astar.is_unblocked(self.nav_goal[0], self.nav_goal[1]):
             return self.get_observation(), 0, False, False, {}
-        elif (self.grid_valid_locations[self.nav_goal[0], self.nav_goal[1]] == 0 or 
-            not self.astar.a_star_search(self.agent_loc, self.nav_goal)):
+        elif self.grid_valid_locations[
+            self.nav_goal[0], self.nav_goal[1]
+        ] == 0 or not self.astar.a_star_search(self.agent_loc, self.nav_goal):
             return self.get_observation(), -5, False, False, {}
         path = self.astar.SmoothPath()
         total_time, coverage = self.sweep_path(path)
@@ -237,7 +246,7 @@ class CCPP_Env(gym.Env):
     def get_turn_distance(self, veca, vecb):
         adotb = np.dot(veca, vecb)
         abmag = np.linalg.norm(veca) * np.linalg.norm(vecb)
-        return math.acos(np.clip(adotb / abmag,-1,1))
+        return math.acos(np.clip(adotb / abmag, -1, 1))
 
     def transform_xy_to_map(self, x, y):
         return round((x - self.x_min) * self.scaling), round(

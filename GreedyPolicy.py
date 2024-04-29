@@ -7,12 +7,12 @@ from torch.autograd import Variable
 import easydict
 import math
 from collections import deque
-from envs import env
 import time
 from torchvision import transforms
 import numpy as np
 from tqdm import tqdm
 import json
+from CCPP import CCPP_Env
 
 
 # class RandPolicy(nn.Module):
@@ -25,6 +25,7 @@ args = {
     "num_episodes": 10
 }
 
+env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[7.5, 0])
 state, info = env.reset()
 done = False
 total_reward = 0

@@ -29,54 +29,69 @@ args = easydict.EasyDict(
         "lr": 5e-5,
         "max_episode_length": 128,
         "num_episodes": 32,
+        "entropy_coef": 0.01,
         "enable_cuda": True,
-        "device" : device
+        "device": device,
     }
 )
 
-class CCPP_Resnet(nn.Module):
+
+class CCPP_CNN(nn.Module):
     def __init__(self):
-        super(CCPP_Resnet, self).__init__()
-        resnet = resnet18(pretrained=True)
-        resnet = resnet.float()
-        self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1])
+        super(CCPP_CNN, self).__init__()
+        self.features = nn.Sequential()
+        self.features.add_module(
+            "conv1", nn.Conv2d(3, 64, kernel_size=5, stride=1, padding=2)
+        )
+        self.features.add_module("tanh1", nn.Tanh(inplace=True))
+        self.features.add_module(
+            "conv2", nn.Conv2d(64, 64, kernel_size=5, stride=1, padding=2)
+        )
+        self.features.add_module("tanh2", nn.Tanh(inplace=True))
+        # self.features.add_module("maxpool2", nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+        self.features.add_module(
+            "conv3", nn.Conv2d(64, 32, kernel_size=5, stride=1, padding=2)
+        )
+        self.features.add_module("tanh3", nn.Tanh(inplace=True))
+        self.features.add_module("maxpool3", nn.MaxPool2d(kernel_size=2))
 
     def forward(self, x):
         # print(x.dtype)
-        x = self.feature_extractor(x)
+        x = self.features(x)
         return x
 
 
 class CCPP_Actor(nn.Module):
-    def __init__(self):
+    def __init__(self, image_dims):
         super(CCPP_Actor, self).__init__()
 
-        self.resnet = CCPP_Resnet().float()
+        self.resnet = CCPP_CNN().float()
         self.features = nn.Sequential()
         self.features.add_module("flatten", nn.Flatten())
-        self.features.add_module("lin1", nn.Linear(512, 512))
+        self.features.add_module(
+            "lin1", nn.LazyLinear(image_dims[0] / 2 * image_dims[1] / 2 * 32, 2048)
+        )
         self.features.add_module("tanh1", nn.Tanh())
-        self.features.add_module("lin2", nn.Linear(512, 512))
-        self.features.add_module("tanh2", nn.Tanh())
-        self.features.add_module("lin3", nn.Linear(512, 2))
+        self.features.add_module("lin2", nn.LazyLinear(2048, 2))
 
     def forward(self, x):
         out = self.resnet(x)
         out = self.features(out)
         return out
 
+
 class CCPP_Critic(nn.Module):
-    def __init__(self):
+    def __init__(self, image_dims):
         super(CCPP_Critic, self).__init__()
 
-        self.resnet = CCPP_Resnet().float()
+        self.resnet = CCPP_CNN().float()
         self.features = nn.Sequential()
         self.features.add_module("flatten", nn.Flatten())
-        self.features.add_module("lin1", nn.Linear(512, 512))
+        self.features.add_module(
+            "lin1", nn.LazyLinear(image_dims[0] / 2 * image_dims[1] / 2 * 32, 2048)
+        )
         self.features.add_module("tanh1", nn.Tanh())
-        self.features.add_module("lin2", nn.Linear(512, 512))
-        self.features.add_module("tanh2", nn.Tanh())
-        self.features.add_module("lin3", nn.Linear(512, 1))
+        self.features.add_module("lin2", nn.LazyLinear(2048, 1))
 
     def forward(self, x):
         out = self.resnet(x)
@@ -93,16 +108,29 @@ def convert_index_to_action(index):
 def convert_action(action):
     env.possible_start_positions
     clip_action = torch.clip(action, -100, 100)
-    index_to_pos = len(env.possible_start_positions)*(clip_action + 100)/200 
-    env_position = env.possible_start_positions[(round(torch.clip(index_to_pos,0, len(env.possible_start_positions) - 1).detach().cpu().numpy()[0]))]
-    converted_action = np.array([env_position[0]/env.scaling + env.x_min, env_position[1]/env.scaling + env.y_min])
+    index_to_pos = len(env.possible_start_positions) * (clip_action + 100) / 200
+    env_position = env.possible_start_positions[
+        (
+            round(
+                torch.clip(index_to_pos, 0, len(env.possible_start_positions) - 1)
+                .detach()
+                .cpu()
+                .numpy()[0]
+            )
+        )
+    ]
+    converted_action = np.array(
+        [
+            env_position[0] / env.scaling + env.x_min,
+            env_position[1] / env.scaling + env.y_min,
+        ]
+    )
 
     return converted_action
+
+
 def get_action(policy_output):
-    action_mean, action_std = (
-        policy_output[:, 0],
-        policy_output[:, 1]
-    )
+    action_mean, action_std = (policy_output[:, 0], policy_output[:, 1])
     action_std = torch.exp(action_std)
     dist = distributions.Normal(action_mean, action_std)
 
@@ -120,15 +148,16 @@ def get_action(policy_output):
     return convert_action(action), log_prob
 
 
-def get_log_prob(policy_output):
+def get_log_prob_entropy(policy_output):
     action_mean, action_std = (policy_output[:, 0], policy_output[:, 1])
     action_std = torch.exp(action_std)
     dist = distributions.Normal(action_mean, action_std)
 
     action = dist.sample()
     log_prob = dist.log_prob(action)
+    entropy = dist.entropy().mean()
 
-    return log_prob
+    return log_prob, entropy
 
 
 def compute_gae(
@@ -152,6 +181,7 @@ def compute_gae(
 #             rand_ids
 #         ], advantage[rand_ids]
 
+
 def ppo_iter(mini_batch_size, states, log_probs, returns, advantage):
     batch_size = states.shape[0]
     # shuffle the states
@@ -167,15 +197,9 @@ def ppo_iter(mini_batch_size, states, log_probs, returns, advantage):
         ind = indices[i * mini_batch_size :]
         yield states[ind], log_probs[ind], returns[ind], advantage[ind]
 
+
 def preprocess_input(x):
-    preprocess = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.Lambda(lambda x: x.float()),
-        ]
-    )
-    return preprocess(x).unsqueeze(0)
+    return torch.from_numpy(x).float().unsqueeze(0)
 
 
 def preprocess_input_batched(x):
@@ -228,9 +252,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
             policy, value = actor(state), critic(state)
 
             action, log_prob = get_action(policy.detach().cpu())
-            next_state, reward, done, truncated, info = env.step(
-                action
-            )
+            next_state, reward, done, truncated, info = env.step(action)
             mask = 1 if not done else 0
 
             total_reward += reward
@@ -268,9 +290,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 batch_log_probs,
                 batch_return,
                 batch_advantage,
-            ) in ppo_iter(
-                args["batch_size"], states, log_probs, returns, advantages
-            ):
+            ) in ppo_iter(args["batch_size"], states, log_probs, returns, advantages):
                 actor_optim.zero_grad()
                 critic_optim.zero_grad()
                 if len(batch_state.shape) == 3:
@@ -281,16 +301,18 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                     batch_state = preprocess_input_batched(batch_state).to(device)
                 policy, value = actor(batch_state), critic(batch_state)
 
-                log_prob = get_log_prob(policy)
+                log_prob, entropy = get_log_prob_entropy(policy)
 
                 ratio = torch.exp(log_prob - batch_log_probs.to(device))
                 surr1 = ratio * batch_advantage.to(device)
-                surr2 = (
-                    torch.clamp(ratio, 1.0 - args["eps_clip"], 1.0 + args["eps_clip"])
-                    * batch_advantage.to(device)
-                )
+                surr2 = torch.clamp(
+                    ratio, 1.0 - args["eps_clip"], 1.0 + args["eps_clip"]
+                ) * batch_advantage.to(device)
+                # add entropy term
 
-                actor_loss = (-torch.min(surr1, surr2)).mean()
+                actor_loss = (-torch.min(surr1, surr2)).mean() - args[
+                    "entropy_coef"
+                ] * entropy
                 critic_loss = (batch_return.to(device) - value).pow(2).mean()
 
                 actor_loss.backward()
