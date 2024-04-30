@@ -61,11 +61,12 @@ class CCPP_Env(gym.Env):
 
         # get the size of the image
         self.image_size_x, self.image_size_y = get_image_size(self.vectormap, scaling)
-        # pad so that x and y are even, we will add padding on both sides
-        if self.image_size_x % 2 == 1:
-            self.image_size_x += 1
-        if self.image_size_y % 2 == 1:
-            self.image_size_y += 1
+        # pad so that x and y are divisible by 4
+        self.image_size_x += 4 - self.image_size_x % 4
+        self.image_size_y += 4 - self.image_size_y % 4
+
+        # add padding to the image size and make sure padding * 2 is divisible by 4
+        self.map_padding += 1 if self.map_padding % 2 == 1 else 0
 
         self.image_size_x += self.map_padding * 2
         self.image_size_y += self.map_padding * 2
@@ -261,12 +262,12 @@ class CCPP_Env(gym.Env):
             (self.image_size_x, self.image_size_y), dtype=np.uint8
         )
         agent_x, agent_y = self.agent_loc[0], self.agent_loc[1]
-        for i in range(
-            agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2
+        min_x, min_y = self.transform_xy_to_map(self.x_min, self.y_min)
+        max_x, max_y = self.transform_xy_to_map(self.x_max, self.y_max)
+        for i in range(max(min_x, agent_x - self.scaling // 2), min(max_x, agent_x + self.scaling // 2)
         ):
-            for j in range(
-                agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2
-            ):
+            for j in range(max(min_y, agent_y - self.scaling // 2), min(max_y, agent_y + self.scaling // 2)
+        ):
                 self.agent_channel[i, j] = 1
         # fill in one square on the perimeter of the map to indicate the direction of the agent
 

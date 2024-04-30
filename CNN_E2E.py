@@ -12,7 +12,7 @@ from torchvision import transforms
 import numpy as np
 from tqdm import tqdm
 import json
-from CCPP import CCPP_Env
+from CCPP_E2E import CCPP_Env
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,14 +20,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # argument parser
 args = easydict.EasyDict(
     {
-        "batch_size": 16,
+        "batch_size": 8,
         "gamma": 0.99,
         "lambda": 0.95,
         "eps_clip": 0.2,
         "buffer_size": 64,
         "epochs": 10,
         "lr": 5e-5,
-        "max_episode_length": 128,
+        "max_episode_length": 32,
         "num_episodes": 32,
         "entropy_coef": 0.01,
         "enable_cuda": True,
@@ -41,19 +41,26 @@ class CCPP_CNN(nn.Module):
         super(CCPP_CNN, self).__init__()
         self.features = nn.Sequential()
         self.features.add_module(
-            "conv1", nn.Conv2d(3, 64, kernel_size=5, stride=1, padding=2)
+            "conv1", nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
         )
-        self.features.add_module("tanh1", nn.Tanh(inplace=True))
+        self.features.add_module("tanh1", nn.Tanh())
+        self.features.add_module("avgpool1", nn.AvgPool2d(kernel_size=2))
         self.features.add_module(
-            "conv2", nn.Conv2d(64, 64, kernel_size=5, stride=1, padding=2)
+            "conv2", nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
         )
-        self.features.add_module("tanh2", nn.Tanh(inplace=True))
-        # self.features.add_module("maxpool2", nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+        self.features.add_module("tanh2", nn.Tanh())
+        self.features.add_module("avgpool2", nn.AvgPool2d(kernel_size=2))
         self.features.add_module(
-            "conv3", nn.Conv2d(64, 32, kernel_size=5, stride=1, padding=2)
+            "conv3", nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
         )
-        self.features.add_module("tanh3", nn.Tanh(inplace=True))
-        self.features.add_module("maxpool3", nn.MaxPool2d(kernel_size=2))
+        self.features.add_module("tanh3", nn.Tanh())
+        self.features.add_module("avgpool3", nn.AvgPool2d(kernel_size=2))
+        self.features.add_module(
+            "conv4", nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
+        )
+        self.features.add_module("tanh4", nn.Tanh())
+        self.features.add_module("avgpool4", nn.AvgPool2d(kernel_size=2))
+        
 
     def forward(self, x):
         # print(x.dtype)
@@ -69,10 +76,10 @@ class CCPP_Actor(nn.Module):
         self.features = nn.Sequential()
         self.features.add_module("flatten", nn.Flatten())
         self.features.add_module(
-            "lin1", nn.LazyLinear(image_dims[0] / 2 * image_dims[1] / 2 * 32, 2048)
+            "lin1", nn.Linear(15200 , 512)
         )
         self.features.add_module("tanh1", nn.Tanh())
-        self.features.add_module("lin2", nn.LazyLinear(2048, 2))
+        self.features.add_module("lin2", nn.Linear(512, 2))
 
     def forward(self, x):
         out = self.resnet(x)
@@ -83,15 +90,15 @@ class CCPP_Actor(nn.Module):
 class CCPP_Critic(nn.Module):
     def __init__(self, image_dims):
         super(CCPP_Critic, self).__init__()
-
+            # "lin1", nn.Linear(image_dims[0] * image_dims[1] * 32 //(16*16) , 512)
         self.resnet = CCPP_CNN().float()
         self.features = nn.Sequential()
         self.features.add_module("flatten", nn.Flatten())
         self.features.add_module(
-            "lin1", nn.LazyLinear(image_dims[0] / 2 * image_dims[1] / 2 * 32, 2048)
+            "lin1", nn.Linear(15200 , 512)
         )
         self.features.add_module("tanh1", nn.Tanh())
-        self.features.add_module("lin2", nn.LazyLinear(2048, 1))
+        self.features.add_module("lin2", nn.Linear(512, 1))
 
     def forward(self, x):
         out = self.resnet(x)
@@ -106,9 +113,28 @@ def convert_index_to_action(index):
 
 
 def convert_action(action):
-    env.possible_start_positions
-    clip_action = torch.clip(action, -100, 100)
-    index_to_pos = len(env.possible_start_positions) * (clip_action + 100) / 200
+    # env.possible_start_positions
+    # clip_action = torch.clip(action, -100, 100)
+    # index_to_pos = len(env.possible_start_positions) * (clip_action + 100) / 200
+    # env_position = env.possible_start_positions[
+    #     (
+    #         round(
+    #             torch.clip(index_to_pos, 0, len(env.possible_start_positions) - 1)
+    #             .detach()
+    #             .cpu()
+    #             .numpy()[0]
+    #         )
+    #     )
+    # ]
+    # converted_action = np.array(
+    #     [
+    #         env_position[0] / env.scaling + env.x_min,
+    #         env_position[1] / env.scaling + env.y_min,
+    #     ]
+    # )
+    # use tanh to conver the action to the range of -1 to 1
+    tanh_action = torch.tanh(action)
+    index_to_pos = len(env.possible_start_positions) * (tanh_action + 1) / 2
     env_position = env.possible_start_positions[
         (
             round(
@@ -125,7 +151,6 @@ def convert_action(action):
             env_position[1] / env.scaling + env.y_min,
         ]
     )
-
     return converted_action
 
 
@@ -135,13 +160,13 @@ def get_action(policy_output):
     dist = distributions.Normal(action_mean, action_std)
 
     # with probability epsilon, choose a greedy action instead
-    epsilon = 0.1
-    if np.random.rand() < epsilon:
-        for i, state in enumerate(env.possible_start_positions):
-            if env.coverage_channel_out[state[0], state[1]] == 1:
-                action = convert_index_to_action(i)
-    else:
-        action = dist.sample()
+    # epsilon = 0.1
+    # if np.random.rand() < epsilon:
+    #     for i, state in enumerate(env.possible_start_positions):
+    #         if env.coverage_channel_out[state[0], state[1]] == 1:
+    #             action = convert_index_to_action(i)
+    # else:
+    action = dist.sample()
 
     log_prob = dist.log_prob(action)
 
@@ -247,7 +272,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 state = state[0]
 
             state_buffer.append(torch.from_numpy(state))
-            state = np.array(state, dtype=np.double)
+            # state = np.array(state, dtype=np.double)
             state = preprocess_input(state).to(device)
             policy, value = actor(state), critic(state)
 
@@ -294,11 +319,10 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 actor_optim.zero_grad()
                 critic_optim.zero_grad()
                 if len(batch_state.shape) == 3:
-                    batch_state = np.array(batch_state, dtype=np.double)
-                    batch_state = preprocess_input(batch_state).to(device)
+                    batch_state = batch_state.unsqueeze(0).float().to(device)
                 # batched
                 else:
-                    batch_state = preprocess_input_batched(batch_state).to(device)
+                    batch_state = batch_state.float().to(device)
                 policy, value = actor(batch_state), critic(batch_state)
 
                 log_prob, entropy = get_log_prob_entropy(policy)
@@ -321,8 +345,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 critic_optim.step()
 
         # print("Evaluation")
-        torch.save(actor.state_dict(), "checkpoints_area/actor_{}.pth".format(i))
-        torch.save(critic.state_dict(), "checkpoints_area/critic_{}.pth".format(i))
+        torch.save(actor.state_dict(), "checkpoints_e2e/actor_{}.pth".format(i))
+        torch.save(critic.state_dict(), "checkpoints_e2e/critic_{}.pth".format(i))
         # # evaluate the model
         # actor.eval()
         # critic.eval()
@@ -347,47 +371,61 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         #     prog_bar.update(1)
         #     # env.render()
         #     # time.sleep(2)
-        # env.render()
-        # time.sleep(2)
+        env.render()
+        time.sleep(2)
+        # kill the window
+        env.close()
         # print("Number of invalid actions: ", num_invalid)
-        # print(f"Episode {i} Total Reward: {total_reward}\n")
+        print(f"Episode {i} Total Reward: {total_reward}\n")
 
 
-def eval(actor, env):
-    state, info = env.reset()
-    done = False
-    total_reward = 0
-    curr_step = 0
-    prog_bar = tqdm(total=1000)
-    milestone = 0.1
-    num_invalid = 0
-    rewards = []
+# def eval(actor, env):
+#     state, info = env.reset()
+#     done = False
+#     total_reward = 0
+#     curr_step = 0
+#     prog_bar = tqdm(total=1000)
+#     milestone = 0.1
+#     num_invalid = 0
+#     rewards = []
 
-    while not done and curr_step < 1000:
-        state = np.array(state, dtype=np.double)
-        state = preprocess_input(state).to(device)
-        policy = actor(state)
-        action, _ = get_action(policy)
-        next_state, reward, done, truncated, info = env.step(action)
-        total_reward += reward
-        state = next_state
-        if env.curr_coverage / env.coverage_possible >= milestone:
-            print(f"Coverage: {milestone} hit at step {curr_step}")
-            milestone += 0.1
-        curr_step += 1
-        prog_bar.update(1)
-        if env.curr_coverage / env.coverage_possible >= milestone:
-            print(f"Coverage: {milestone} hit at step {curr_step}")
-            milestone += 0.1
-        # env.render()
-        # time.sleep(2)
-    print(f"Total Reward: {total_reward}\n")
+#     while not done and curr_step < 1000:
+#         state = np.array(state, dtype=np.double)
+#         state = preprocess_input(state).to(device)
+#         policy = actor(state)
+#         action, _ = get_action(policy)
+#         next_state, reward, done, truncated, info = env.step(action)
+#         total_reward += reward
+#         state = next_state
+#         if env.curr_coverage / env.coverage_possible >= milestone:
+#             print(f"Coverage: {milestone} hit at step {curr_step}")
+#             milestone += 0.1
+#         curr_step += 1
+#         prog_bar.update(1)
+#         if env.curr_coverage / env.coverage_possible >= milestone:
+#             print(f"Coverage: {milestone} hit at step {curr_step}")
+#             milestone += 0.1
+#         # env.render()
+#         # time.sleep(2)
+#     print(f"Total Reward: {total_reward}\n")
 
 
+# env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[7.5, 0])
+# actor = CCPP_Actor().to(device)
+# actor = actor.float()
+
+# actor.load_state_dict(torch.load("actor_9.pth", map_location=device))
+# actor.eval()
+# eval(actor, env)
 env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[7.5, 0])
-actor = CCPP_Actor().to(device)
+actor = CCPP_Actor((env.image_size_x, env.image_size_y))
+critic = CCPP_Critic((env.image_size_x, env.image_size_y))
+# actor.load_state_dict(torch.load("checkpoints/actor.pth"))
+# critic.load_state_dict(torch.load("checkpoints/critic.pth"))
 actor = actor.float()
+critic = critic.float()
+actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
+critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
 
-actor.load_state_dict(torch.load("actor_9.pth", map_location=device))
-actor.eval()
-eval(actor, env)
+
+train(actor, critic, actor_optim, critic_optim, env, args)

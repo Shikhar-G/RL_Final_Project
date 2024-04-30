@@ -91,13 +91,46 @@ def convert_index_to_action(index):
 
 
 def convert_action(action):
-    env.possible_start_positions
-    clip_action = torch.clip(action, -100, 100)
-    index_to_pos = len(env.possible_start_positions)*(clip_action + 100)/200 
-    env_position = env.possible_start_positions[(round(torch.clip(index_to_pos,0, len(env.possible_start_positions) - 1).detach().cpu().numpy()[0]))]
-    converted_action = np.array([env_position[0]/env.scaling + env.x_min, env_position[1]/env.scaling + env.y_min])
-
+    # env.possible_start_positions
+    # clip_action = torch.clip(action, -100, 100)
+    # index_to_pos = len(env.possible_start_positions) * (clip_action + 100) / 200
+    # env_position = env.possible_start_positions[
+    #     (
+    #         round(
+    #             torch.clip(index_to_pos, 0, len(env.possible_start_positions) - 1)
+    #             .detach()
+    #             .cpu()
+    #             .numpy()[0]
+    #         )
+    #     )
+    # ]
+    # converted_action = np.array(
+    #     [
+    #         env_position[0] / env.scaling + env.x_min,
+    #         env_position[1] / env.scaling + env.y_min,
+    #     ]
+    # )
+    # use tanh to conver the action to the range of -1 to 1
+    tanh_action = torch.tanh(action)
+    index_to_pos = len(env.possible_start_positions) * (tanh_action + 1) / 2
+    env_position = env.possible_start_positions[
+        (
+            round(
+                torch.clip(index_to_pos, 0, len(env.possible_start_positions) - 1)
+                .detach()
+                .cpu()
+                .numpy()[0]
+            )
+        )
+    ]
+    converted_action = np.array(
+        [
+            env_position[0] / env.scaling + env.x_min,
+            env_position[1] / env.scaling + env.y_min,
+        ]
+    )
     return converted_action
+
 def get_action(policy_output):
     action_mean, action_std = (
         policy_output[:, 0],
@@ -331,41 +364,41 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         # print(f"Episode {i} Total Reward: {total_reward}\n")
 
 
-def eval(actor, env):
-    state, info = env.reset()
-    done = False
-    total_reward = 0
-    curr_step = 0
-    prog_bar = tqdm(total=1000)
-    milestone = 0.1
-    num_invalid = 0
-    rewards = []
+# def eval(actor, env):
+#     state, info = env.reset()
+#     done = False
+#     total_reward = 0
+#     curr_step = 0
+#     prog_bar = tqdm(total=1000)
+#     milestone = 0.1
+#     num_invalid = 0
+#     rewards = []
 
-    while not done and curr_step < 1000:
-        state = np.array(state, dtype=np.double)
-        state = preprocess_input(state).to(device)
-        policy = actor(state)
-        action, _ = get_action(policy)
-        next_state, reward, done, truncated, info = env.step(action)
-        total_reward += reward
-        state = next_state
-        if env.curr_coverage / env.coverage_possible >= milestone:
-            print(f"Coverage: {milestone} hit at step {curr_step}")
-            milestone += 0.1
-        curr_step += 1
-        prog_bar.update(1)
-        if env.curr_coverage / env.coverage_possible >= milestone:
-            print(f"Coverage: {milestone} hit at step {curr_step}")
-            milestone += 0.1
-        # env.render()
-        # time.sleep(2)
-    print(f"Total Reward: {total_reward}\n")
+#     while not done and curr_step < 1000:
+#         state = np.array(state, dtype=np.double)
+#         state = preprocess_input(state).to(device)
+#         policy = actor(state)
+#         action, _ = get_action(policy)
+#         next_state, reward, done, truncated, info = env.step(action)
+#         total_reward += reward
+#         state = next_state
+#         if env.curr_coverage / env.coverage_possible >= milestone:
+#             print(f"Coverage: {milestone} hit at step {curr_step}")
+#             milestone += 0.1
+#         curr_step += 1
+#         prog_bar.update(1)
+#         if env.curr_coverage / env.coverage_possible >= milestone:
+#             print(f"Coverage: {milestone} hit at step {curr_step}")
+#             milestone += 0.1
+#         # env.render()
+#         # time.sleep(2)
+#     print(f"Total Reward: {total_reward}\n")
 
 
-env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[7.5, 0])
-actor = CCPP_Actor().to(device)
-actor = actor.float()
+# env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[7.5, 0])
+# actor = CCPP_Actor().to(device)
+# actor = actor.float()
 
-actor.load_state_dict(torch.load("actor_9.pth", map_location=device))
-actor.eval()
-eval(actor, env)
+# actor.load_state_dict(torch.load("actor_9.pth", map_location=device))
+# actor.eval()
+# eval(actor, env)
