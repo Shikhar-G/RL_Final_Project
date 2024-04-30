@@ -6,13 +6,29 @@ import numpy as np
 import json
 import math
 import cv2
-
+from Astar import Astar
 
 def get_vectormap(map_file):
     f = open(map_file)
     data = json.load(f)
     return data
 
+def get_GDC1_vectormap(map_file):
+    f = open(map_file)
+    data = json.load(f)
+    # save values with "y" > 0
+    i = 0
+    new_data = []
+    for line in data:
+        bad_line = False
+        for point in line:
+            if line[point]["y"] < 0:
+                bad_line = True
+        if not bad_line:
+            new_data.append(line)
+    new_file = open("CDL_Ground_top_only.vectormap.json", "w")
+    json.dump(new_data, new_file)
+    return new_data
 
 def get_image_size(vectormap, scaling=10, padding=0):
     # get the size of the image
@@ -52,13 +68,13 @@ class CCPP_Env(gym.Env):
         agent_max_linear_speed=0.3,
         agent_max_angular_speed=1.9,
         scaling=10,
-        coverage_radius=1,
-        coverage_required=0.9,
+        coverage_radius=2,
+        coverage_required=0.85,
     ):
         # get map properties
         self.scaling = scaling
         self.map_padding = self.scaling
-        self.vectormap = get_vectormap(map_file)
+        self.vectormap = get_GDC1_vectormap(map_file)
         self.coverage_required = coverage_required
 
         # get the size of the image
@@ -110,7 +126,10 @@ class CCPP_Env(gym.Env):
         self.coverage_possible = np.count_nonzero(self.map_channel_out)
         self.coverage_channel_out = self.map_channel_out.copy()
         self.curr_coverage = 0
+        self.curr_time = 0
         print("coverage possible: ", self.coverage_possible)
+        self.possible_start_positions = np.array(self.possible_start_positions)
+        np.sort(self.possible_start_positions, axis=0)
         self.action_space = spaces.Box(
             low=np.array([self.x_min, self.y_min]),
             high=np.array([self.x_max, self.y_max]),
@@ -122,7 +141,7 @@ class CCPP_Env(gym.Env):
         self.time_penalty_per_scaled_meter = 1.0
 
         self.coverage_weight = 0.1
-        self.time_weight = 0.025
+        self.time_weight = 0.1
         self.total_termination_ratio_weight = 1000
 
     def reset(self):
@@ -131,6 +150,7 @@ class CCPP_Env(gym.Env):
         )
         self.coverage_channel_out = self.map_channel_out.copy()
         self.curr_coverage = 0
+        self.curr_time = 0
         # randomly sample a start point
         start_index = np.random.randint(0, len(self.possible_start_positions))
         self.agent_loc = self.possible_start_positions[start_index]
@@ -192,7 +212,7 @@ class CCPP_Env(gym.Env):
         percent_covered = self.curr_coverage / self.coverage_possible
         return (
             coverage * (1 + percent_covered**2)
-        ) / self.scaling * self.coverage_weight - total_time * self.time_weight
+        ) / (self.scaling) * self.coverage_weight - total_time * self.time_weight
 
     def check_next_step(self, action):
         if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
@@ -500,4 +520,5 @@ class CCPP_Env(gym.Env):
             # total_length += segment_length
             total_time += turn_time + linear_time
         new_coverage = np.count_nonzero(self.coverage_channel) - old_coverage
+        self.curr_time += total_time
         return total_time, new_coverage

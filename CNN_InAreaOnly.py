@@ -13,6 +13,7 @@ import numpy as np
 from tqdm import tqdm
 import json
 import matplotlib.pyplot as plt
+from CCPP import CCPP_Env
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -25,11 +26,11 @@ args = easydict.EasyDict(
         "eps_clip": 0.2,
         "buffer_size": 64,
         "epochs": 10,
-        "lr": 1e-5,
+        "lr": 1e-6,
         "max_episode_length": 128,
         "num_episodes": 32,
         "enable_cuda": True,
-        "entropy_coef": 0.01,
+        "entropy_coef": 0.03,
         "device": device,
     }
 )
@@ -83,8 +84,97 @@ class CCPP_Critic(nn.Module):
         out = self.features(out)
         return out
 
+def convert_position_to_action(position, env):
+    return np.array(
+        [
+            position[0] / env.scaling + env.x_min,
+            position[1] / env.scaling + env.y_min,
+        ]
+    )
 
-def convert_action(action):
+
+def transform_action(action, env, ind = 0):
+    tanh_action = torch.tanh(action)
+    index_to_pos = len(env.possible_start_positions) * (tanh_action + 1) / 2
+    env_index =(
+            round(
+                torch.clip(index_to_pos, 0, len(env.possible_start_positions) - 1)
+                .detach()
+                .cpu()
+                .numpy()[ind]
+            )
+        )
+    env_position = env.possible_start_positions[env_index]
+    # converted_action = np.array(
+    #     [
+    #         env_position[0] / env.scaling + env.x_min,
+    #         env_position[1] / env.scaling + env.y_min,
+    #     ]
+    # )
+    if env.coverage_channel_out[env_position[0], env_position[1]] == 1:
+        return convert_position_to_action(env_position, env) , convert_index_to_action(env_index, env)
+    else:
+        pos_index = env_index
+        neg_index = env_index
+        pos_position = env_position
+        neg_position = env_position
+        steps_to_increment = min(len(env.possible_start_positions) - 1 - env_index, env_index)
+        for i in range(steps_to_increment):
+            pos_index += 1
+            neg_index -= 1
+            pos_position = env.possible_start_positions[pos_index]
+            neg_position = env.possible_start_positions[neg_index]
+            if env.coverage_channel_out[pos_position[0], pos_position[1]] == 1:
+                return convert_position_to_action(pos_position, env) , convert_index_to_action(pos_index, env)
+            if env.coverage_channel_out[neg_position[0], neg_position[1]] == 1:
+                return convert_position_to_action(neg_position, env) , convert_index_to_action(neg_index, env)
+        while pos_index < len(env.possible_start_positions):
+            pos_position = env.possible_start_positions[pos_index]
+            if env.coverage_channel_out[pos_position[0], pos_position[1]] == 1:
+                return convert_position_to_action(pos_position, env) , convert_index_to_action(pos_index, env)
+            pos_index += 1
+        while neg_index >= 0:
+            neg_position = env.possible_start_positions[neg_index]
+            if env.coverage_channel_out[neg_position[0], neg_position[1]] == 1:
+                return convert_position_to_action(neg_position, env) , convert_index_to_action(neg_index, env)
+            neg_index -= 1
+    return convert_position_to_action(env_position, env) , convert_index_to_action(env_index, env)
+
+
+
+        # for i in range(len(env.possible_start_positions) - 1):
+        #     pos_index += 1
+        #     neg_index -= 1
+        #     pos_position = env.possible_start_positions[pos_index]
+        #     neg_position = env.possible_start_positions[neg_index]
+        #     if pos_index < len(env.possible_start_positions) and env.coverage_channel_out[pos_position[0], pos_position[1]] == 1:
+        #         converted_action = np.array(
+        #             [
+        #                 pos_position[0] / env.scaling + env.x_min,
+        #                 pos_position[1] / env.scaling + env.y_min,
+        #             ]
+        #         )
+        #         return converted_action
+        #     if neg_index >- 0 and env.coverage_channel_out[neg_position[0], neg_position[1]] == 1:
+        #         converted_action = np.array(
+        #             [
+        #                 neg_position[0] / env.scaling + env.x_min,
+        #                 neg_position[1] / env.scaling + env.y_min,
+        #             ]
+        #         )
+        #         return converted_action
+            
+        # env_position = env.possible_start_positions[first_index]
+        # converted_action = np.array(
+        # [
+        #     env_position[0] / env.scaling + env.x_min,
+        #     env_position[1] / env.scaling + env.y_min,
+        # ]
+        # )
+        # return converted_action
+            
+
+def convert_action(action, env):
     tanh_action = torch.tanh(action)
     index_to_pos = len(env.possible_start_positions) * (tanh_action + 1) / 2
     env_position = env.possible_start_positions[
@@ -106,10 +196,11 @@ def convert_action(action):
     return converted_action
 
 
-def convert_index_to_action(index):
-    pos = env.possible_start_positions[index]
-    pos_to_action = pos / len(env.possible_start_positions) * 200 - 100
-    return torch.tensor(pos_to_action)
+def convert_index_to_action(index, env):
+    index_scaled = index / len(env.possible_start_positions) * 2 - 1
+    # # inverse tanh
+    index_to_action = math.atanh(np.clip(index_scaled, -0.99, 0.99))
+    return torch.tensor(index_to_action)
 
 
 def get_action(policy_output, env):
@@ -122,19 +213,27 @@ def get_action(policy_output, env):
     action = 0
 
     action = dist.sample()
+    raw_action = action
+    action_out = action
+    # for i in range(len(action)):
+    #     action_out[i], raw_action[i] = transform_action(action[i], env)
+    action_out , raw_action = transform_action(action, env)
+    log_prob = dist.log_prob(raw_action)
 
-    log_prob = dist.log_prob(action)
-
-    return convert_action(action), log_prob
+    return action_out, log_prob
 
 
-def get_log_prob_entropy(policy_output):
+def get_log_prob_entropy(policy_output, env):
     action_mean, action_std = (policy_output[:, 0], policy_output[:, 1])
     action_std = torch.exp(action_std)
     dist = distributions.Normal(action_mean, action_std)
 
     action = dist.sample()
-    log_prob = dist.log_prob(action)
+    raw_action = action
+    # print(len(action))
+    for i in range(len(action)):
+        _, raw_action[i] = transform_action(action, env, i)
+    log_prob = dist.log_prob(raw_action)
     entropy = dist.entropy().mean()
 
     return log_prob, entropy
@@ -257,10 +356,15 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
         log_probs = torch.cat(log_prob_buffer)
         advantages = returns - torch.tensor(value_buffer)
         # print(actions[0])
-        plt.imshow(env.get_observation() * 255)
-        plt.pause(1)
+        # plt.imshow(env.get_observation() * 255)
+        env.render()
+        time.sleep(2)
+        # plt.pause(1)
         print(f"\nEpisode {i} Total Reward: {total_reward}\n")
-
+        ratio_coverage = env.curr_coverage / env.coverage_possible
+        print(f"Coverage ratio: {ratio_coverage} \n")
+        total_time = env.curr_time
+        print(f"Total time: {total_time} \n")
         # PPO update
         actor.train()
         critic.train()
@@ -283,7 +387,7 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                     batch_state = preprocess_input_batched(batch_state).to(device)
                 policy, value = actor(batch_state), critic(batch_state)
 
-                log_prob, entropy = get_log_prob_entropy(policy)
+                log_prob, entropy = get_log_prob_entropy(policy, env)
 
                 ratio = torch.exp(log_prob - batch_log_probs.to(device))
                 surr1 = ratio * batch_advantage.to(device)
@@ -301,6 +405,9 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 actor_optim.step()
                 critic_loss.backward()
                 critic_optim.step()
+        
+        torch.save(actor.state_dict(), "checkpoints_area/actor_{}.pth".format(i))
+        torch.save(critic.state_dict(), "checkpoints_area/critic_{}.pth".format(i))
 
 
 def eval(actor, env):
@@ -317,7 +424,7 @@ def eval(actor, env):
         state = np.array(state, dtype=np.double)
         state = preprocess_input(state).to(device)
         policy = actor(state)
-        action, _ = get_action(policy)
+        action, _ = get_action(policy, env)
         next_state, reward, done, truncated, info = env.step(action)
         total_reward += reward
         state = next_state
@@ -337,3 +444,16 @@ def eval(actor, env):
 # actor.load_state_dict(torch.load("actor_9.pth", map_location=device))
 # actor.eval()
 # eval(actor, env)
+
+env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[0, 8],map_file="maps/GDC1.vectormap.json",scaling=6, coverage_radius=2)
+actor = CCPP_Actor()
+critic = CCPP_Critic()
+# actor.load_state_dict(torch.load("checkpoints_area/actor_3.pth"))
+# critic.load_state_dict(torch.load("checkpoints_area/critic_3.pth"))
+actor = actor.float()
+critic = critic.float()
+actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
+critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
+
+
+train(actor, critic, actor_optim, critic_optim, env, args)
