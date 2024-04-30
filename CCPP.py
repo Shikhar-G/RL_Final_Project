@@ -5,7 +5,6 @@ from gymnasium import spaces
 import numpy as np
 import json
 import math
-from Astar import Astar
 import cv2
 
 
@@ -46,7 +45,7 @@ class CCPP_Env(gym.Env):
     def __init__(
         self,
         render_mode=None,
-        map_file="maps/CDL_Ground.vectormap.json",
+        map_file="CDL_Ground.vectormap.json",
         agent_dims=np.array([1, 1]),
         agent_loc=np.array([0, 0]),
         agent_dir=np.array([0, 1]),
@@ -190,10 +189,10 @@ class CCPP_Env(gym.Env):
 
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
+        percent_covered = self.curr_coverage / self.coverage_possible
         return (
-            coverage / self.scaling * self.coverage_weight
-            - total_time * self.time_weight
-        )
+            coverage * (1 + percent_covered**2)
+        ) / self.scaling * self.coverage_weight - total_time * self.time_weight
 
     def check_next_step(self, action):
         if not self.is_valid(self.nav_goal[0], self.nav_goal[1]):
@@ -259,11 +258,15 @@ class CCPP_Env(gym.Env):
             (self.image_size_x, self.image_size_y), dtype=np.uint8
         )
         agent_x, agent_y = self.agent_loc[0], self.agent_loc[1]
+        min_x, min_y = self.transform_xy_to_map(self.x_min, self.y_min)
+        max_x, max_y = self.transform_xy_to_map(self.x_max, self.y_max)
         for i in range(
-            agent_x - self.agent_dims[0] // 2, agent_x + self.agent_dims[0] // 2
+            max(min_x, agent_x - self.scaling // 2),
+            min(max_x, agent_x + self.scaling // 2),
         ):
             for j in range(
-                agent_y - self.agent_dims[1] // 2, agent_y + self.agent_dims[1] // 2
+                max(min_y, agent_y - self.scaling // 2),
+                min(max_y, agent_y + self.scaling // 2),
             ):
                 self.agent_channel[i, j] = 1
         # fill in one square on the perimeter of the map to indicate the direction of the agent
