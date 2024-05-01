@@ -75,9 +75,13 @@ class RL_Policy(Policy):
     def __init__(self, env, model_file, device='cpu'):
         super(RL_Policy, self).__init__(env)
         self.model = CNN_InAreaOnly.CCPP_Actor().to(device)
+        self.device = device
         self.model.load_state_dict(torch.load(model_file, map_location=device))
+        self.env = env
     
     def get_action(self, state):
-        policy = self.model(state)
-        action, _ = CNN_InAreaOnly.get_action(policy.detach().cpu().numpy(), self.env)
+        state = np.array(state, dtype=np.double)
+        state_tensor = CNN_InAreaOnly.preprocess_input(state).to(self.device)
+        policy = self.model(state_tensor)
+        action, _ = CNN_InAreaOnly.get_action(policy.detach().cpu(), self.env)
         return action
