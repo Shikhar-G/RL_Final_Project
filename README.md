@@ -1,4 +1,4 @@
-# library_project
+# RL Final Project
 To run the eval loop all you have to do is call CNN_InAreaOnly.py and it should just start an evaluation of a trained model. If you want to train you will have to go into the CNN_InAreaOnly.py and uncomment the train commands at the end of the file. To run simply call:
 
 ```python3 CNN_InAreaOnly.py```
