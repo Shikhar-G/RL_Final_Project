@@ -15,7 +15,7 @@ import json
 import os
 from Policy import RL_Policy, RandomPolicy, Policy, GreedyPolicy
 from CCPP import CCPP_Env
-
+import matplotlib.pyplot as plt
 args = easydict.EasyDict(
     {
         "batch_size": 32,
@@ -34,8 +34,8 @@ args = easydict.EasyDict(
 
 def eval(actor_file, args, env):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    policies = [RL_Policy(env, actor_file, device)]  #[RandomPolicy(env), GreedyPolicy(env), RL_Policy(env, actor_file, device)]
-    policy_types = ["RL"]#["Random", "Greedy", "RL"]
+    policies = [RL_Policy(env, actor_file, device)] #RandomPolicy(env), GreedyPolicy(env),
+    policy_types = ["RL"] # "Random", "Greedy", 
 
     for i, policy in enumerate(policies):
         print(f"Policy: {policy_types[i]}")
@@ -76,5 +76,6 @@ def eval(actor_file, args, env):
         print(f"Average Time Steps: {np.mean(final_time_steps)}")
         print("\n")
 
-env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[ 0, 8],map_file="maps/GDC1.vectormap.json",scaling=6, coverage_radius=2)
+env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[ 0, 8],map_file="maps/GDC1_Ground_top_only.vectormap.json",scaling=6, coverage_radius=2)
+
 eval("checkpoints_area/actor_1preset_7687_.1entr.pth", args, env)

@@ -13,22 +13,22 @@ def get_vectormap(map_file):
     data = json.load(f)
     return data
 
-def get_GDC1_vectormap(map_file):
-    f = open(map_file)
-    data = json.load(f)
-    # save values with "y" > 0
-    i = 0
-    new_data = []
-    for line in data:
-        bad_line = False
-        for point in line:
-            if line[point]["y"] < 0:
-                bad_line = True
-        if not bad_line:
-            new_data.append(line)
-    new_file = open("CDL_Ground_top_only.vectormap.json", "w")
-    json.dump(new_data, new_file)
-    return new_data
+# def get_GDC1_vectormap(map_file):
+#     f = open(map_file)
+#     data = json.load(f)
+#     # save values with "y" > 0
+#     i = 0
+#     new_data = []
+#     for line in data:
+#         bad_line = False
+#         for point in line:
+#             if line[point]["y"] < 0:
+#                 bad_line = True
+#         if not bad_line:
+#             new_data.append(line)
+#     new_file = open("CDL_Ground_top_only.vectormap.json", "w")
+#     json.dump(new_data, new_file)
+#     return new_data
 
 def get_image_size(vectormap, scaling=10, padding=0):
     # get the size of the image
@@ -61,7 +61,7 @@ class CCPP_Env(gym.Env):
     def __init__(
         self,
         render_mode=None,
-        map_file="CDL_Ground.vectormap.json",
+        map_file="maps/CDL_Ground.vectormap.json",
         agent_dims=np.array([1, 1]),
         agent_loc=np.array([0, 0]),
         agent_dir=np.array([0, 1]),
@@ -74,7 +74,7 @@ class CCPP_Env(gym.Env):
         # get map properties
         self.scaling = scaling
         self.map_padding = self.scaling
-        self.vectormap = get_GDC1_vectormap(map_file)
+        self.vectormap = get_vectormap(map_file)
         self.coverage_required = coverage_required
 
         # get the size of the image
@@ -100,6 +100,7 @@ class CCPP_Env(gym.Env):
             [math.ceil(agent_dims[0] * scaling), math.ceil(agent_dims[1] * scaling)]
         )
         self.agent_loc = self.transform_xy_to_map(agent_loc[0], agent_loc[1])
+        self.original_agent_loc = self.agent_loc
         # unit vector for agent direction
         self.agent_dir = agent_dir / np.linalg.norm(agent_dir)
         self.agent_max_linear_speed = agent_max_linear_speed  # in meters/second
@@ -153,6 +154,7 @@ class CCPP_Env(gym.Env):
         self.curr_time = 0
         # randomly sample a start point
         start_index = np.random.randint(0, len(self.possible_start_positions))
+        # self.agent_loc = self.original_agent_loc
         self.agent_loc = self.possible_start_positions[start_index]
         # randomly sample 2 numbers from -1 to 1 then normalize them
         self.agent_dir = np.random.rand(2) * 2 - 1
@@ -201,11 +203,6 @@ class CCPP_Env(gym.Env):
             (224, 224),
         )
 
-    # def get_reward_termination(self):
-    #     uncovered = self.coverage_possible - np.count_nonzero(self.coverage_channel)
-    #     ratio = uncovered / self.coverage_possible
-    #     print("uncovered: ", uncovered, "ratio: ", ratio)
-    #     return -self.total_termination_ratio_weight * ratio
 
     def get_reward(self, total_time, coverage):
         # print("total time: ", total_time, "coverage: ", coverage)
@@ -291,33 +288,6 @@ class CCPP_Env(gym.Env):
                 self.agent_channel[i, j] = 1
         # fill in one square on the perimeter of the map to indicate the direction of the agent
 
-        # # get the center of the map
-        # old_x = self.image_size_x // 2
-        # old_y = self.image_size_y // 2
-        # x = self.image_size_x // 2
-        # y = self.image_size_y // 2
-        # # move in the direction of the agent until we hit the edge of the map
-        # dir = self.agent_dir * self.scaling
-        # while self.is_valid(x, y):
-        #     x += round(dir[0])
-        #     y += round(dir[1])
-        # # set the pixel at the edge of the map to 1
-        # box_size = max(self.map_padding // 4, 1)
-        # if x < 0:
-        #     x = box_size
-        # elif x >= self.image_size_x:
-        #     x = self.image_size_x - 1 - box_size
-        # if y < 0:
-        #     y = box_size
-        # elif y >= self.image_size_y:
-        #     y = self.image_size_y - 1 - box_size
-
-        # # draw a box around the pixel of 0.5m
-        # for i in range(max(x - box_size, 0), min(x + box_size + 1, self.image_size_x)):
-        #     for j in range(
-        #         max(y - box_size, 0), min(y + box_size + 1, self.image_size_y)
-        #     ):
-        #         self.agent_channel[i, j] = 1
 
     def set_map_channel(self):
         # first channel is the map, which is a binary image where 0 is empty space and 1 is occupied space

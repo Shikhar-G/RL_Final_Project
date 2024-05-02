@@ -30,7 +30,7 @@ args = easydict.EasyDict(
         "max_episode_length": 128,
         "num_episodes": 32,
         "enable_cuda": True,
-        "entropy_coef": 0.03,
+        "entropy_coef": 0.01,
         "device": device,
     }
 )
@@ -105,12 +105,7 @@ def transform_action(action, env, ind = 0):
             )
         )
     env_position = env.possible_start_positions[env_index]
-    # converted_action = np.array(
-    #     [
-    #         env_position[0] / env.scaling + env.x_min,
-    #         env_position[1] / env.scaling + env.y_min,
-    #     ]
-    # )
+
     if env.coverage_channel_out[env_position[0], env_position[1]] == 1:
         return convert_position_to_action(env_position, env) , convert_index_to_action(env_index, env)
     else:
@@ -140,38 +135,6 @@ def transform_action(action, env, ind = 0):
             neg_index -= 1
     return convert_position_to_action(env_position, env) , convert_index_to_action(env_index, env)
 
-
-
-        # for i in range(len(env.possible_start_positions) - 1):
-        #     pos_index += 1
-        #     neg_index -= 1
-        #     pos_position = env.possible_start_positions[pos_index]
-        #     neg_position = env.possible_start_positions[neg_index]
-        #     if pos_index < len(env.possible_start_positions) and env.coverage_channel_out[pos_position[0], pos_position[1]] == 1:
-        #         converted_action = np.array(
-        #             [
-        #                 pos_position[0] / env.scaling + env.x_min,
-        #                 pos_position[1] / env.scaling + env.y_min,
-        #             ]
-        #         )
-        #         return converted_action
-        #     if neg_index >- 0 and env.coverage_channel_out[neg_position[0], neg_position[1]] == 1:
-        #         converted_action = np.array(
-        #             [
-        #                 neg_position[0] / env.scaling + env.x_min,
-        #                 neg_position[1] / env.scaling + env.y_min,
-        #             ]
-        #         )
-        #         return converted_action
-            
-        # env_position = env.possible_start_positions[first_index]
-        # converted_action = np.array(
-        # [
-        #     env_position[0] / env.scaling + env.x_min,
-        #     env_position[1] / env.scaling + env.y_min,
-        # ]
-        # )
-        # return converted_action
             
 
 def convert_action(action, env):
@@ -221,7 +184,34 @@ def get_action(policy_output, env):
     log_prob = dist.log_prob(raw_action)
 
     return action_out, log_prob
+# def get_action(policy_output, env):
+#     action_mean, action_std = (
+#         policy_output[:, 0],
+#         policy_output[:, 1]
+#     )
+#     action_std = torch.exp(action_std)
+#     dist = distributions.Normal(action_mean, action_std)
+#     action = 0
 
+#     action = dist.sample()
+#     log_prob = dist.log_prob(action)
+
+#     return convert_action(action, env), log_prob
+
+# def get_log_prob_entropy(policy_output, env):
+#     action_mean, action_std = (policy_output[:, 0], policy_output[:, 1])
+#     action_std = torch.exp(action_std)
+#     dist = distributions.Normal(action_mean, action_std)
+
+#     action = dist.sample()
+#     raw_action = action
+#     # print(len(action))
+#     for i in range(len(action)):
+#         _, raw_action[i] = transform_action(action, env, i)
+#     log_prob = dist.log_prob(raw_action)
+#     entropy = dist.entropy().mean()
+
+#     return log_prob, entropy
 
 def get_log_prob_entropy(policy_output, env):
     action_mean, action_std = (policy_output[:, 0], policy_output[:, 1])
@@ -229,11 +219,11 @@ def get_log_prob_entropy(policy_output, env):
     dist = distributions.Normal(action_mean, action_std)
 
     action = dist.sample()
-    raw_action = action
-    # print(len(action))
-    for i in range(len(action)):
-        _, raw_action[i] = transform_action(action, env, i)
-    log_prob = dist.log_prob(raw_action)
+    # raw_action = action
+    # # print(len(action))
+    # for i in range(len(action)):
+    #     _, raw_action[i] = transform_action(action, env, i)
+    log_prob = dist.log_prob(action)
     entropy = dist.entropy().mean()
 
     return log_prob, entropy
@@ -252,13 +242,6 @@ def compute_gae(
     return returns.detach()
 
 
-# def ppo_iter(mini_batch_size, states, actions, log_probs, returns, advantage):
-#     batch_size = states.shape[0]
-#     for _ in range(batch_size // mini_batch_size):
-#         rand_ids = torch.randint(0, batch_size, (mini_batch_size,))
-#         yield states[rand_ids], actions[rand_ids], log_probs[rand_ids], returns[
-#             rand_ids
-#         ], advantage[rand_ids]
 
 def ppo_iter(mini_batch_size, states, log_probs, returns, advantage):
     batch_size = states.shape[0]
@@ -406,8 +389,8 @@ def train(actor, critic, actor_optim, critic_optim, env, args):
                 critic_loss.backward()
                 critic_optim.step()
         
-        torch.save(actor.state_dict(), "checkpoints_area/actor_{}.pth".format(i))
-        torch.save(critic.state_dict(), "checkpoints_area/critic_{}.pth".format(i))
+        # torch.save(actor.state_dict(), "checkpoints_area/actor_{}.pth".format(i))
+        # torch.save(critic.state_dict(), "checkpoints_area/critic_{}.pth".format(i))
 
 
 def eval(actor, env):
@@ -445,7 +428,7 @@ def eval(actor, env):
 # actor.eval()
 # eval(actor, env)
 
-env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[0, 8],map_file="maps/GDC1.vectormap.json",scaling=6, coverage_radius=2)
+env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[ 0, 8],map_file="maps/CDL_Ground.vectormap.json",scaling=6, coverage_radius=2)
 actor = CCPP_Actor()
 critic = CCPP_Critic()
 # actor.load_state_dict(torch.load("checkpoints_area/actor_3.pth"))
