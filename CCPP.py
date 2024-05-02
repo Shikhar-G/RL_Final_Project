@@ -13,22 +13,6 @@ def get_vectormap(map_file):
     data = json.load(f)
     return data
 
-# def get_GDC1_vectormap(map_file):
-#     f = open(map_file)
-#     data = json.load(f)
-#     # save values with "y" > 0
-#     i = 0
-#     new_data = []
-#     for line in data:
-#         bad_line = False
-#         for point in line:
-#             if line[point]["y"] < 0:
-#                 bad_line = True
-#         if not bad_line:
-#             new_data.append(line)
-#     new_file = open("CDL_Ground_top_only.vectormap.json", "w")
-#     json.dump(new_data, new_file)
-#     return new_data
 
 def get_image_size(vectormap, scaling=10, padding=0):
     # get the size of the image
@@ -154,7 +138,6 @@ class CCPP_Env(gym.Env):
         self.curr_time = 0
         # randomly sample a start point
         start_index = np.random.randint(0, len(self.possible_start_positions))
-        # self.agent_loc = self.original_agent_loc
         self.agent_loc = self.possible_start_positions[start_index]
         # randomly sample 2 numbers from -1 to 1 then normalize them
         self.agent_dir = np.random.rand(2) * 2 - 1
@@ -205,7 +188,6 @@ class CCPP_Env(gym.Env):
 
 
     def get_reward(self, total_time, coverage):
-        # print("total time: ", total_time, "coverage: ", coverage)
         percent_covered = self.curr_coverage / self.coverage_possible
         return (
             coverage * (1 + percent_covered**2)
@@ -237,7 +219,6 @@ class CCPP_Env(gym.Env):
         path = self.astar.SmoothPath()
         total_time, coverage = self.sweep_path(path)
         self.curr_coverage += coverage
-        # self.agent_loc = self.nav_goal[0], self.nav_goal[1]
         self.set_agent_channel()
         # check if agent has reached coverage threshold
         if self.curr_coverage >= self.coverage_possible * self.coverage_required:
@@ -351,14 +332,11 @@ class CCPP_Env(gym.Env):
         segment_length = np.linalg.norm(p1 - p0)
         # segment length now unscaled
         segment_length_scaled = segment_length  # *scaling
-        # m = (p1[1] - p0[1])/(p1[0] - p0[0])
-        # m_inv = -1/m
         theta = math.atan2((p1[1] - p0[1]), (p1[0] - p0[0]))
         tangent_line_theta = math.atan2(-(p1[0] - p0[0]), (p1[1] - p0[1]))
         d_coverage_radius = round(radius_scaled / increment)
         d_line_length = round(segment_length_scaled / increment)
         # position along the main line
-        # pos = [(p0[0]-x_min)*10, (p0[1]-y_min)*10] #scaled version for original values
         pos = [p0[0], p0[1]]  # assumed scaling done before this function
         heading_rad_inc = [
             increment * math.cos(tangent_line_theta),
@@ -414,8 +392,7 @@ class CCPP_Env(gym.Env):
                 else:
                     stop_neg = True
             pos = [pos[0] + heading_segment_inc[0], pos[1] + heading_segment_inc[1]]
-        # print("new coverage: ", new_coverage, "recoverage: ", recoverage)
-        # the circular area it covers at the end of a line segment, the circle is fucked up and could be fixed but its good enough
+        
         for d_circ in range(d_coverage_radius + 1):
             old_rad_pos = [0, 0]
             old_rad_neg = [0, 0]
@@ -469,14 +446,12 @@ class CCPP_Env(gym.Env):
                 else:
                     stop_neg = True
             pos = [pos[0] + heading_segment_inc[0], pos[1] + heading_segment_inc[1]]
-        # print("new coverage: ", new_coverage, "recoverage: ", recoverage)
         return segment_length
 
     # this function is used to sweep the path and update the coverage channel, it returns coverage channel, how many cells were newly covered, and how many were gone over again (recoverage)
     def sweep_path(self, path, increment=0.5):
         p0 = path[0]
         old_coverage = np.count_nonzero(self.coverage_channel)
-        # total_length = 0
         total_time = 0
         for p1 in path[1:]:
             segment_length = self.line_coverage_channel_sweep(p0, p1, increment)
@@ -487,7 +462,6 @@ class CCPP_Env(gym.Env):
             self.agent_dir = p0_p1_vec
             self.agent_loc = p1
             p0 = p1
-            # total_length += segment_length
             total_time += turn_time + linear_time
         new_coverage = np.count_nonzero(self.coverage_channel) - old_coverage
         self.curr_time += total_time

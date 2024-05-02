@@ -419,24 +419,26 @@ def eval(actor, env):
         if env.curr_coverage / env.coverage_possible >= milestone:
             print(f"Coverage: {milestone} hit at step {curr_step}")
             milestone += 0.1
-        # env.render()
-        # time.sleep(2)
     print(f"Total Reward: {total_reward}\n")
+    env.render()
+    time.sleep(2)
+
+actor = CCPP_Actor().to(device)
+
+env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[ 0, 8],map_file="maps/GDC1_Ground.vectormap.json",scaling=6, coverage_radius=2)
+actor.load_state_dict(torch.load("checkpoints/actor.pth", map_location=device))
+actor.eval()
+eval(actor, env)
 
 
-# actor.load_state_dict(torch.load("actor_9.pth", map_location=device))
-# actor.eval()
-# eval(actor, env)
-
-env = CCPP_Env(agent_dims=[0.2, 0.2], agent_loc=[ 0, 8],map_file="maps/CDL_Ground.vectormap.json",scaling=6, coverage_radius=2)
-actor = CCPP_Actor()
-critic = CCPP_Critic()
-# actor.load_state_dict(torch.load("checkpoints_area/actor_3.pth"))
-# critic.load_state_dict(torch.load("checkpoints_area/critic_3.pth"))
-actor = actor.float()
-critic = critic.float()
-actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
-critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
+# actor = CCPP_Actor()
+# critic = CCPP_Critic()
+# # actor.load_state_dict(torch.load("checkpoints_area/actor_3.pth"))
+# # critic.load_state_dict(torch.load("checkpoints_area/critic_3.pth"))
+# actor = actor.float()
+# critic = critic.float()
+# actor_optim = torch.optim.Adam(actor.parameters(), lr=args.lr)
+# critic_optim = torch.optim.Adam(critic.parameters(), lr=args.lr)
 
 
-train(actor, critic, actor_optim, critic_optim, env, args)
+# train(actor, critic, actor_optim, critic_optim, env, args)
